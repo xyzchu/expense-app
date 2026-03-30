@@ -140,6 +140,13 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
   // Currency words
   if (!cur) { for (const [re,code] of CURR_WORDS) { if (re.test(t)){cur=code; t=t.replace(re,' '); break;} } }
 
+  // ── ADD THIS: Standalone currency code (e.g. "USD $10" where $ matched first) ──
+  if (!cur) {
+    const cc = ALL_CUR.join('|');
+    const m = t.match(new RegExp(`\\b(${cc})\\b`, 'i'));
+    if (m) { cur = m[1].toUpperCase(); t = t.replace(m[0], ' '); }
+  }
+
   // Bare number
   if (amt==null) { const m=t.match(/\b(\d+(?:\.\d+)?)\b/); if(m){amt=parseFloat(m[1]);t=t.replace(m[0],' ');} }
   if (amt==null) return null;
