@@ -1806,7 +1806,7 @@ export default function SplitEase() {
         fontFamily:MONO,
         lineHeight:1.8,
       }}>
-        <div>© {new Date().getFullYear()} SplitEase. All rights reserved.</div>
+        <div>© {new Date().getFullYear()} By Roland Chu. All rights reserved.</div>
         <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'}</div>
       </div>
 
