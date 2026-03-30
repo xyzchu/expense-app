@@ -1795,6 +1795,21 @@ export default function SplitEase() {
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
 
+      {/* Footer */}
+      <div style={{
+        textAlign:'center',
+        padding:'16px 16px 80px',
+        fontSize:9,
+        letterSpacing:'0.08em',
+        textTransform:'uppercase',
+        opacity:0.2,
+        fontFamily:MONO,
+        lineHeight:1.8,
+      }}>
+        <div>© {new Date().getFullYear()} SplitEase. All rights reserved.</div>
+        <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'}</div>
+      </div>
+
       {/* Bottom Nav */}
       <div style={{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:480,background:'#fff',borderTop:'1px solid #eee',boxShadow:'0 -2px 10px rgba(0,0,0,0.04)',zIndex:40,display:'flex',fontFamily:MONO}}>
         {[
