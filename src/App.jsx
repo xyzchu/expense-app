@@ -606,10 +606,14 @@ export default function SplitEase() {
   /* ── Edit Expense ── */
   const startEdit = (exp) => {
     setEditingId(exp.id);
+    const hasOrig = exp.original_currency && exp.original_amount;
     setEditForm({
       item: exp.item, total_amount: exp.total_amount, category: exp.category,
       paid_by: exp.paid_by, date: exp.date, split_type: exp.split_type,
-      shares: {...(exp.shares || {})}
+      shares: {...(exp.shares || {})},
+      original_currency: exp.original_currency || '',
+      original_amount: exp.original_amount ?? '',
+      exchange_rate: hasOrig ? parseFloat((exp.total_amount / exp.original_amount).toFixed(6)) : 1,
     });
   };
 
@@ -632,8 +636,12 @@ export default function SplitEase() {
     }
     shares = Object.fromEntries(Object.entries(shares).map(([k,v])=>[k,Math.round(parseFloat(v)*100)/100]));
 
-    const {_computedShares, ...cleanForm} = editForm;
-    const upd = {...cleanForm, total_amount: total, shares};
+    const {_computedShares, exchange_rate, ...cleanForm} = editForm;
+    const upd = {
+      ...cleanForm, total_amount: total, shares,
+      original_currency: editForm.original_currency || null,
+      original_amount: editForm.original_currency ? (parseFloat(editForm.original_amount) || null) : null,
+    };
     const {error} = await sb.from('expenses').update(upd).eq('id', editingId);
     if (error) { showToast('Error: '+error.message); return; }
 
@@ -1361,12 +1369,69 @@ export default function SplitEase() {
                 ) : (
                   <div style={{padding:'14px 16px',background:'#fafaf8'}}>
                     <div style={{marginBottom:8}}><input value={editForm.item} onChange={e=>setEditForm({...editForm,item:e.target.value})} style={s.input}/></div>
+                    {/* Amount + Currency */}
                     <div style={{display:'flex',gap:8,marginBottom:8}}>
-                      <input type="number" value={editForm.total_amount} onChange={e=>setEditForm({...editForm,total_amount:e.target.value})} style={s.input}/>
+                      <input type="number"
+                        value={editForm.original_currency ? editForm.original_amount : editForm.total_amount}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (editForm.original_currency) {
+                            const rate = parseFloat(editForm.exchange_rate) || 0;
+                            setEditForm({...editForm, original_amount: val, total_amount: parseFloat(((parseFloat(val)||0) * rate).toFixed(2))});
+                          } else {
+                            setEditForm({...editForm, total_amount: val});
+                          }
+                        }}
+                        style={s.input} placeholder="Amount"/>
+                      <select
+                        value={editForm.original_currency || defCur}
+                        onChange={e => {
+                          const cur = e.target.value;
+                          if (cur === defCur) {
+                            setEditForm(f => ({...f, original_currency: '', original_amount: '', exchange_rate: 1}));
+                          } else {
+                            const rate = rates[cur] ? parseFloat((1 / rates[cur]).toFixed(6)) : 1;
+                            if (!editForm.original_currency) {
+                              const total = parseFloat(editForm.total_amount) || 0;
+                              const origAmt = rate > 0 ? parseFloat((total / rate).toFixed(NO_DEC.has(cur)?0:2)) : 0;
+                              setEditForm(f => ({...f, original_currency: cur, original_amount: origAmt, exchange_rate: rate}));
+                            } else {
+                              setEditForm(f => {
+                                const origAmt = parseFloat(f.original_amount) || 0;
+                                return {...f, original_currency: cur, exchange_rate: rate, total_amount: parseFloat((origAmt * rate).toFixed(2))};
+                              });
+                            }
+                          }
+                        }}
+                        style={{...s.input, maxWidth: 120}}>
+                        {ALL_CUR.map(c => <option key={c} value={c}>{CURR_FLAG[c]||''} {c}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Exchange rate row — only for foreign currency */}
+                    {editForm.original_currency && (
+                      <div style={{background:'#fef9e7',border:'1px solid #f0e6c0',borderRadius:12,padding:'8px 12px',marginBottom:8,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                        <span style={{fontSize:10,...s.upper,opacity:0.5,whiteSpace:'nowrap'}}>1 {editForm.original_currency} =</span>
+                        <input type="number" step="0.000001"
+                          value={editForm.exchange_rate}
+                          onChange={e => {
+                            const rate = e.target.value;
+                            const origAmt = parseFloat(editForm.original_amount) || 0;
+                            setEditForm({...editForm, exchange_rate: rate, total_amount: parseFloat((origAmt * (parseFloat(rate)||0)).toFixed(2))});
+                          }}
+                          style={{...s.input,width:100,background:'#fff',padding:'6px 10px',flex:'0 0 auto'}}/>
+                        <span style={{fontSize:10,...s.upper,opacity:0.5}}>{defCur}</span>
+                        <span style={{fontSize:11,fontWeight:700,...s.tabnum,marginLeft:'auto'}}>≈ {fmt(parseFloat(editForm.total_amount)||0, defCur)}</span>
+                      </div>
+                    )}
+
+                    {/* Category */}
+                    <div style={{marginBottom:8}}>
                       <select value={editForm.category} onChange={e=>setEditForm({...editForm,category:e.target.value})} style={s.input}>
                         {allCatNames.map(c=><option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
+
                     <div style={{display:'flex',gap:8,marginBottom:8}}>
                       <select value={editForm.paid_by} onChange={e=>setEditForm({...editForm,paid_by:e.target.value})} style={s.input}>
                         {names.map(n=><option key={n} value={n}>{n}</option>)}
