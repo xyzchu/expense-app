@@ -267,6 +267,7 @@ export default function SplitEase() {
   const [newListCur, setNewListCur] = useState('AUD');
   const [newDisplayName, setNewDisplayName] = useState('');
   const [joinCode, setJoinCode] = useState('');
+  const [confirmDeleteList, setConfirmDeleteList] = useState(false);
 
   // ── App State ──
   const [tab, setTab] = useState('home');
@@ -487,6 +488,22 @@ const fetchRates = useCallback(async (base) => {
     setListScreen('select');
     setNewListName(''); setNewDisplayName('');
     showToast('List created with sample data! Share code: ' + list.invite_code);
+  };
+
+  /* delete list */
+  const deleteList = async () => {
+    if (!currentList) return;
+    // Delete children first (in case RLS blocks cascade)
+    await sb.from('expenses').delete().eq('list_id', currentList.id);
+    await sb.from('list_settings').delete().eq('list_id', currentList.id);
+    await sb.from('list_members').delete().eq('list_id', currentList.id);
+    await sb.from('expense_lists').delete().eq('id', currentList.id);
+    setLists(prev => prev.filter(l => l.id !== currentList.id));
+    setCurrentList(null);
+    localStorage.removeItem('splitease_list');
+    setTab('home');
+    setConfirmDeleteList(false);
+    showToast('List deleted');
   };
 
   /* ── Join List ── */
@@ -1763,13 +1780,38 @@ const addManualExpense = async () => {
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Session</h3>
           <p className="text-sm text-gray-600 mb-1">Logged in as <strong>{user.email}</strong></p>
           <p className="text-sm text-gray-600 mb-3">List: <strong>{currentList.name}</strong></p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button onClick={()=>{setCurrentList(null);localStorage.removeItem('splitease_list');setTab('home');}}
               className="px-3 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 transition">Switch List</button>
             <button onClick={logout}
               className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 transition flex items-center gap-1">
               <LogOut size={14}/> Log Out
             </button>
+          </div>
+
+          {/* Delete List */}
+          <div className="mt-4 pt-3 border-t">
+            {!confirmDeleteList ? (
+              <button onClick={()=>setConfirmDeleteList(true)}
+                className="text-xs text-red-400 hover:text-red-600 transition">
+                Delete this list…
+              </button>
+            ) : (
+              <div className="bg-red-50 rounded-lg p-3 space-y-2">
+                <p className="text-sm text-red-700 font-semibold">Delete "{currentList.name}"?</p>
+                <p className="text-xs text-red-500">This will permanently delete all expenses, members, and settings. This cannot be undone.</p>
+                <div className="flex gap-2">
+                  <button onClick={deleteList}
+                    className="px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition flex items-center gap-1">
+                    <Trash2 size={14}/> Yes, delete everything
+                  </button>
+                  <button onClick={()=>setConfirmDeleteList(false)}
+                    className="px-3 py-2 bg-white border rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
