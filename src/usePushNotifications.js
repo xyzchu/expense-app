@@ -48,8 +48,6 @@ export function usePushNotifications(user, currentList, onError) {
     if (!currentList) { onError?.('No list selected'); return; }
 
     setLoading(true);
-    onError?.('Requesting permission…');
-
     try {
       const reg = await navigator.serviceWorker.register('/sw.js');
       await navigator.serviceWorker.ready;
@@ -58,7 +56,6 @@ export function usePushNotifications(user, currentList, onError) {
       setPermission(perm);
       if (perm !== 'granted') { onError?.('Permission not granted — check browser settings'); setLoading(false); return; }
 
-      onError?.('Subscribing…');
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -67,12 +64,11 @@ export function usePushNotifications(user, currentList, onError) {
         });
       }
 
-      onError?.('Saving subscription…');
       const { error } = await sb.from('push_subscriptions').upsert(
         { user_id: user.id, list_id: currentList.id, subscription: sub.toJSON() },
         { onConflict: 'user_id,list_id' }
       );
-      if (error) { onError?.('DB error: ' + error.message); }
+      if (error) { onError?.('Failed to save subscription: ' + error.message); }
       else { setSubscribed(true); onError?.('Notifications enabled!'); }
     } catch (err) {
       console.error('Push subscribe error:', err);

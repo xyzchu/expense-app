@@ -1808,7 +1808,7 @@ export default function SplitEase() {
               <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>Get notified when someone adds or edits an expense in this list.</div>
               <button
                 style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
-                onClick={() => { showToast('btn clicked'); pushSubscribe(); }}
+                onClick={pushSubscribe}
                 disabled={pushLoading}
               >
                 {pushLoading ? 'Enabling…' : 'Enable notifications'}

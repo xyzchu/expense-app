@@ -183,9 +183,8 @@ async function sendWebPush(
     body: ciphertext,
   });
 
-  const text = await res.text().catch(() => '');
-  console.log(`Push response: ${res.status}`, text);
   if (!res.ok && res.status !== 201) {
+    const text = await res.text().catch(() => '');
     throw new Error(`Push failed: ${res.status} ${text}`);
   }
 }
