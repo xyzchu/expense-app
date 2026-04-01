@@ -1336,11 +1336,27 @@ export default function SplitEase() {
       {/* Expense List */}
       <div style={{padding:'12px 16px'}}>
         <AnimatePresence>
-          {filtered.map(exp => {
-            const ci = catInfo(exp.category);
-            const isEditing = editingId === exp.id;
+          {(() => {
+            const groups = [];
+            let lastMonth = null;
+            filtered.forEach(exp => {
+              const m = exp.date?.slice(0, 7) || '';
+              if (m !== lastMonth) {
+                const [y, mo] = m.split('-');
+                const label = m ? new Date(parseInt(y), parseInt(mo) - 1).toLocaleString('en-AU', {month:'long', year:'numeric'}) : 'Unknown';
+                groups.push(<div key={'h-'+m} style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.3,padding:'8px 2px 4px',letterSpacing:'0.08em'}}>{label}</div>);
+                lastMonth = m;
+              }
+              groups.push(exp);
+            });
+            return groups;
+          })().map(exp => {
+            if (!exp.id) return exp;
+            const exp2 = exp;
+            const ci = catInfo(exp2.category);
+            const isEditing = editingId === exp2.id;
             return (
-              <motion.div key={exp.id} layout initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} exit={{opacity:0,x:-100}}
+              <motion.div key={exp2.id} layout initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} exit={{opacity:0,x:-100}}
                 style={{...s.card,marginBottom:10,padding:0,overflow:'hidden'}}>
                 {!isEditing ? (
                   <div style={{padding:'14px 16px'}}>
