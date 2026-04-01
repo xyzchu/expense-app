@@ -28,7 +28,7 @@ serve(async (req) => {
       });
     }
 
-    const { secret, item, currency, paid_by } = body;
+    const { secret, item, currency, paid_by, split } = body;
     const amount = String(body.amount ?? '');
     if (!secret || !item || !amount) {
       return new Response(JSON.stringify({ error: 'Missing required fields: secret, item, amount' }), {
@@ -80,10 +80,25 @@ serve(async (req) => {
       });
     }
 
-    // Build equal shares
-    const shareAmount = Math.round((totalAmount / names.length) * 100) / 100;
+    // Determine split based on optional "split" field:
+    // "personal"    → payer only
+    // a member name → 100% for that person
+    // anything else → equal split (default)
+    const splitLower = (split || '').trim().toLowerCase();
+    const matchedMember = names.find((n: string) => n.toLowerCase() === splitLower);
     const shares: Record<string, number> = {};
-    names.forEach((n: string) => { shares[n] = shareAmount; });
+    let splitType = 'equal';
+
+    if (splitLower === 'personal') {
+      splitType = 'personal';
+      shares[payer] = totalAmount;
+    } else if (matchedMember) {
+      splitType = 'equal';
+      shares[matchedMember] = totalAmount;
+    } else {
+      const shareAmount = Math.round((totalAmount / names.length) * 100) / 100;
+      names.forEach((n: string) => { shares[n] = shareAmount; });
+    }
 
     // Handle foreign currency
     const isForeign = currency && currency !== defCur;
@@ -94,7 +109,7 @@ serve(async (req) => {
       date: new Date().toISOString().slice(0, 10),
       total_amount: totalAmount,
       paid_by: payer,
-      split_type: 'equal',
+      split_type: splitType,
       shares,
       original_currency: isForeign ? currency : null,
       original_amount: isForeign ? totalAmount : null,
