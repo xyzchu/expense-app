@@ -1926,7 +1926,7 @@ export default function SplitEase() {
               </button>
             </div>
             <div style={{fontSize:10,opacity:0.35,lineHeight:1.6,marginBottom:10}}>
-              Set <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>{'{'}split{'}'}</code> to: <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>equal</code>, <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>personal</code>, or a member name (e.g. <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>Yuton</code>) to assign 100% to them.
+              <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>{'{lv=split}'}</code> is a number 0–100 = other person's share. <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>0</code> = personal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>50</code> = equal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>100</code> = fully theirs · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>30</code> = you 70%, them 30%
             </div>
             <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5,padding:0}} onClick={revokeWebhookToken}>Revoke token</button>
           </div>

@@ -80,24 +80,30 @@ serve(async (req) => {
       });
     }
 
-    // Determine split based on optional "split" field:
-    // "personal"    → payer only
-    // a member name → 100% for that person
-    // anything else → equal split (default)
-    const splitLower = (split || '').trim().toLowerCase();
-    const matchedMember = names.find((n: string) => n.toLowerCase() === splitLower);
+    // Determine split based on optional "split" field (0–100):
+    // 0   = personal (payer only, not shared)
+    // 50  = equal split
+    // 100 = 100% to the other member(s)
+    // 30  = payer 70%, others share 30%
+    const splitPct = parseFloat(String(split ?? '50').replace(/[^0-9.]/g, ''));
+    const otherPct = isNaN(splitPct) ? 50 : Math.min(100, Math.max(0, splitPct));
+    const payerPct = 100 - otherPct;
+
     const shares: Record<string, number> = {};
     let splitType = 'equal';
 
-    if (splitLower === 'personal') {
+    if (otherPct === 0) {
+      // Personal — payer only
       splitType = 'personal';
       shares[payer] = totalAmount;
-    } else if (matchedMember) {
-      splitType = 'equal';
-      shares[matchedMember] = totalAmount;
     } else {
-      const shareAmount = Math.round((totalAmount / names.length) * 100) / 100;
-      names.forEach((n: string) => { shares[n] = shareAmount; });
+      const others = names.filter((n: string) => n !== payer);
+      if (payerPct > 0) {
+        shares[payer] = Math.round((totalAmount * payerPct / 100) * 100) / 100;
+      }
+      others.forEach((n: string) => {
+        shares[n] = Math.round((totalAmount * otherPct / 100 / others.length) * 100) / 100;
+      });
     }
 
     // Handle foreign currency
