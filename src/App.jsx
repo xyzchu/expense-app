@@ -1,3 +1,4 @@
+// supaBase account xyzchu@hotmail.com
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -11,6 +12,7 @@ import {
   PieChart, Pie, Cell
 } from 'recharts';
 import sb from './supabaseClient';
+import { usePushNotifications } from './usePushNotifications';
 
 /* ══════════════════════════════════════════════════════════════
    THEME
@@ -348,6 +350,10 @@ export default function SplitEase() {
     setTimeout(() => setToast(t=>({...t, show:false})), 3500);
   }, []);
 
+  const { supported: pushSupported, permission: pushPermission, subscribed: pushSubscribed,
+          loading: pushLoading, subscribe: pushSubscribe, unsubscribe: pushUnsubscribe,
+          sendNotification } = usePushNotifications(user, currentList);
+
   /* ── Auth Effects ── */
   useEffect(() => {
     sb.auth.getSession().then(({data:{session}}) => {
@@ -542,6 +548,7 @@ export default function SplitEase() {
     setExpenses(prev => [data, ...prev]);
     setShowSettle(false); setSettleAmt('');
     showToast(`Recorded: ${settleFrom} paid ${settleTo} ${fmt(amount, defCur)}`);
+    sendNotification(`💸 ${settleFrom} paid ${settleTo}`, `${fmt(amount, defCur)} in ${currentList.name}`, 'settlement');
   };
 
   const addManualExpense = async () => {
@@ -583,6 +590,7 @@ export default function SplitEase() {
     setAddExactAmounts({}); setAddProportions({}); setAddPercentages({});
     setAddOrigCur(''); setAddOrigAmt(''); setShowForeign(false);
     showToast('Added: ' + data.item);
+    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} — ${fmt(data.total_amount, defCur)}`);
   };
 
   const addExpense = async () => {
@@ -593,6 +601,7 @@ export default function SplitEase() {
     setExpenses(prev => [data, ...prev]);
     setInputText(''); setInputFocused(false);
     showToast('Added: ' + data.item);
+    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} — ${fmt(data.total_amount, defCur)}`);
   };
 
   /* ── Delete Expense ── */
@@ -678,6 +687,7 @@ export default function SplitEase() {
       setExpenses(prev => prev.map(e => e.id === editingId ? {...e,...upd} : e));
       showToast('Saved');
     }
+    sendNotification(`Expense updated in ${currentList.name}`, `${myName} updated ${upd.item} — ${fmt(upd.total_amount, defCur)}`);
     setEditingId(null);
   };
 
@@ -1765,6 +1775,45 @@ export default function SplitEase() {
         <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={importCSV}/>
         <div style={{fontSize:10,...s.upper,opacity:0.25,marginTop:8}}>CSV import supports old 2-person format (your_share/partner_share columns)</div>
       </div>
+
+      {/* Notifications */}
+      {pushSupported && (
+        <div style={{...s.card,marginBottom:12}}>
+          <div style={{...s.label,marginBottom:8}}>Push Notifications</div>
+          {pushPermission === 'denied' ? (
+            <div style={{fontSize:11,opacity:0.5,lineHeight:1.6}}>
+              Notifications are blocked in your browser settings. Enable them for this site to receive alerts.
+            </div>
+          ) : pushSubscribed ? (
+            <div>
+              <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>You'll receive a notification when someone adds or edits an expense in this list.</div>
+              <button
+                style={{...s.sm(false),display:'flex',alignItems:'center',gap:4,color:'#dc2626'}}
+                onClick={pushUnsubscribe}
+                disabled={pushLoading}
+              >
+                {pushLoading ? 'Turning off…' : 'Turn off notifications'}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>Get notified when someone adds or edits an expense in this list.</div>
+              <button
+                style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
+                onClick={pushSubscribe}
+                disabled={pushLoading}
+              >
+                {pushLoading ? 'Enabling…' : 'Enable notifications'}
+              </button>
+              {/iphone|ipad|ipod/i.test(navigator.userAgent) && pushPermission !== 'granted' && (
+                <div style={{fontSize:10,opacity:0.4,marginTop:6}}>
+                  On iOS, install SplitEase to your Home Screen first (Share → Add to Home Screen).
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tips */}
       <div style={{...s.card,marginBottom:12}}>
