@@ -10,22 +10,20 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    // Support both query params and JSON body
-    const url = new URL(req.url);
-    let secret: string, item: string, amount: string, currency: string, paid_by: string;
-
-    if (url.searchParams.get('secret')) {
-      secret = url.searchParams.get('secret') ?? '';
-      item = url.searchParams.get('item') ?? '';
-      amount = url.searchParams.get('amount') ?? '';
-      currency = url.searchParams.get('currency') ?? '';
-      paid_by = url.searchParams.get('paid_by') ?? '';
-    } else {
-      const body = await req.json();
-      secret = body.secret; item = body.item; amount = body.amount;
-      currency = body.currency; paid_by = body.paid_by;
+    // Parse body — sanitize to handle any encoding issues from MacroDroid
+    const raw = await req.text();
+    // Strip any non-printable / control characters that break JSON
+    const sanitized = raw.replace(/[\x00-\x1F\x7F]/g, ' ');
+    let body: Record<string, string>;
+    try {
+      body = JSON.parse(sanitized);
+    } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON', raw: sanitized.slice(0, 200) }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
+    const { secret, item, amount, currency, paid_by } = body;
     if (!secret || !item || !amount) {
       return new Response(JSON.stringify({ error: 'Missing required fields: secret, item, amount' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
