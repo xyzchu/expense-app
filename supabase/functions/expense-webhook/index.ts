@@ -12,8 +12,13 @@ serve(async (req) => {
   try {
     // Parse body — sanitize to handle any encoding issues from MacroDroid
     const raw = await req.text();
-    // Strip any non-printable / control characters that break JSON
-    const sanitized = raw.replace(/[\x00-\x1F\x7F]/g, ' ');
+    // Fix common MacroDroid JSON issues:
+    // 1. Strip control characters
+    // 2. Fix "key":,"value" → "key":"value" (stray comma after colon)
+    // 3. Fix "key": "value" spacing issues
+    const sanitized = raw
+      .replace(/[\x00-\x1F\x7F]/g, ' ')
+      .replace(/:\s*,\s*"/g, ':"');
     let body: Record<string, string>;
     try {
       body = JSON.parse(sanitized);
