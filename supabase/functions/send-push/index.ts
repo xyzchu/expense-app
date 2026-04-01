@@ -147,18 +147,10 @@ function concat(...arrays: Uint8Array[]): Uint8Array {
 }
 
 async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, length: number): Promise<Uint8Array> {
-  const ikmKey = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
-  // Extract
-  const prk = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt, info: new Uint8Array(0) },
-    ikmKey,
-    256
-  );
-  // Expand
-  const prkKey = await crypto.subtle.importKey('raw', prk, 'HKDF', false, ['deriveBits']);
+  const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
   const okm = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info },
-    prkKey,
+    { name: 'HKDF', hash: 'SHA-256', salt, info },
+    key,
     length * 8
   );
   return new Uint8Array(okm);
@@ -191,8 +183,9 @@ async function sendWebPush(
     body: ciphertext,
   });
 
+  const text = await res.text().catch(() => '');
+  console.log(`Push response: ${res.status}`, text);
   if (!res.ok && res.status !== 201) {
-    const text = await res.text().catch(() => '');
     throw new Error(`Push failed: ${res.status} ${text}`);
   }
 }
@@ -215,8 +208,7 @@ serve(async (req) => {
     const { data: subs } = await supabase
       .from('push_subscriptions')
       .select('subscription')
-      .eq('list_id', list_id)
-      .neq('user_id', sender_user_id);
+      .eq('list_id', list_id);
 
     if (!subs || subs.length === 0) {
       return new Response(JSON.stringify({ sent: 0 }), {
