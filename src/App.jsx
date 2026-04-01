@@ -352,7 +352,7 @@ export default function SplitEase() {
 
   const { supported: pushSupported, permission: pushPermission, subscribed: pushSubscribed,
           loading: pushLoading, subscribe: pushSubscribe, unsubscribe: pushUnsubscribe,
-          sendNotification } = usePushNotifications(user, currentList);
+          sendNotification } = usePushNotifications(user, currentList, showToast);
 
   /* ── Auth Effects ── */
   useEffect(() => {
@@ -1800,7 +1800,7 @@ export default function SplitEase() {
               <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>Get notified when someone adds or edits an expense in this list.</div>
               <button
                 style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
-                onClick={pushSubscribe}
+                onClick={() => { showToast('btn clicked'); pushSubscribe(); }}
                 disabled={pushLoading}
               >
                 {pushLoading ? 'Enabling…' : 'Enable notifications'}
@@ -1856,7 +1856,7 @@ export default function SplitEase() {
         lineHeight:1.8,
       }}>
         <div>© {new Date().getFullYear()} By Roland Chu. All rights reserved.</div>
-        <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'}</div>
+        <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''}</div>
       </div>
 
       {/* Bottom Nav */}

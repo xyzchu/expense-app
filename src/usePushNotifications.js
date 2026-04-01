@@ -16,7 +16,7 @@ const supported =
   'PushManager' in window &&
   'Notification' in window;
 
-export function usePushNotifications(user, currentList) {
+export function usePushNotifications(user, currentList, onError) {
   const [permission, setPermission] = useState(
     supported ? Notification.permission : 'unsupported'
   );
@@ -42,16 +42,23 @@ export function usePushNotifications(user, currentList) {
   }, [user, currentList]);
 
   const subscribe = useCallback(async () => {
-    if (!supported || !user || !currentList || !VAPID_PUBLIC_KEY) return;
+    if (!supported) { onError?.('Notifications not supported in this browser'); return; }
+    if (!VAPID_PUBLIC_KEY) { onError?.('Config error: VAPID key missing'); return; }
+    if (!user) { onError?.('Not logged in'); return; }
+    if (!currentList) { onError?.('No list selected'); return; }
+
     setLoading(true);
+    onError?.('Requesting permission…');
+
     try {
-      await navigator.serviceWorker.register('/sw.js');
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
 
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== 'granted') { setLoading(false); return; }
+      if (perm !== 'granted') { onError?.('Permission not granted — check browser settings'); setLoading(false); return; }
 
+      onError?.('Subscribing…');
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -60,16 +67,19 @@ export function usePushNotifications(user, currentList) {
         });
       }
 
+      onError?.('Saving subscription…');
       const { error } = await sb.from('push_subscriptions').upsert(
         { user_id: user.id, list_id: currentList.id, subscription: sub.toJSON() },
         { onConflict: 'user_id,list_id' }
       );
-      if (!error) setSubscribed(true);
+      if (error) { onError?.('DB error: ' + error.message); }
+      else { setSubscribed(true); onError?.('Notifications enabled!'); }
     } catch (err) {
       console.error('Push subscribe error:', err);
+      onError?.('Error: ' + err.message);
     }
     setLoading(false);
-  }, [user, currentList]);
+  }, [user, currentList, onError]);
 
   const unsubscribe = useCallback(async () => {
     if (!supported || !user || !currentList) return;
