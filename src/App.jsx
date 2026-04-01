@@ -1915,12 +1915,18 @@ export default function SplitEase() {
                 <Copy size={12}/>
               </button>
             </div>
-            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid POST body</div>
-            <code style={{fontSize:9,background:'#F0F0EA',padding:'8px',borderRadius:8,display:'block',lineHeight:1.8,wordBreak:'break-all',marginBottom:10}}>
-              {`{"secret":"${webhookToken}","item":"[merchant]","amount":[amount],"currency":"AUD"}`}
-            </code>
+            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid URL (with variables)</div>
+            <div style={{display:'flex',alignItems:'flex-start',gap:6,marginBottom:10}}>
+              <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.8}}>
+                {`https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook?secret=${webhookToken}&item=[merchant]&amount=[amount]&currency=AUD`}
+              </code>
+              <button onClick={()=>{navigator.clipboard?.writeText(`https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook?secret=${webhookToken}&item=[merchant]&amount=[amount]&currency=AUD`);showToast('URL copied');}}
+                style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:2}}>
+                <Copy size={12}/>
+              </button>
+            </div>
             <div style={{fontSize:10,opacity:0.35,lineHeight:1.6,marginBottom:10}}>
-              MacroDroid trigger: Notification received → parse merchant + amount with regex → HTTP POST to URL above with JSON body.
+              Replace [merchant] and [amount] with MacroDroid variables parsed from the notification. No JSON body needed — just paste this URL directly into MacroDroid HTTP action.
             </div>
             <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5,padding:0}} onClick={revokeWebhookToken}>Revoke token</button>
           </div>
