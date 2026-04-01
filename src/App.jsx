@@ -1787,13 +1787,21 @@ export default function SplitEase() {
           ) : pushSubscribed ? (
             <div>
               <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>You'll receive a notification when someone adds or edits an expense in this list.</div>
-              <button
-                style={{...s.sm(false),display:'flex',alignItems:'center',gap:4,color:'#dc2626'}}
-                onClick={pushUnsubscribe}
-                disabled={pushLoading}
-              >
-                {pushLoading ? 'Turning off…' : 'Turn off notifications'}
-              </button>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                <button
+                  style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
+                  onClick={() => { showToast('Sending test…'); sendNotification('🔔 Test', 'Push notifications are working!', 'test'); }}
+                >
+                  Send test notification
+                </button>
+                <button
+                  style={{...s.sm(false),display:'flex',alignItems:'center',gap:4,color:'#dc2626'}}
+                  onClick={pushUnsubscribe}
+                  disabled={pushLoading}
+                >
+                  {pushLoading ? 'Turning off…' : 'Turn off'}
+                </button>
+              </div>
             </div>
           ) : (
             <div>
