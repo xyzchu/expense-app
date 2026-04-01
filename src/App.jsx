@@ -341,6 +341,7 @@ export default function SplitEase() {
   // ── UI ──
   const [toast, setToast] = useState({msg:'', show:false});
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [collapsedMonths, setCollapsedMonths] = useState(new Set());
   const inputRef = useRef(null);
   const fileRef = useRef(null);
   const csvRef = useRef(null);
@@ -1335,24 +1336,39 @@ export default function SplitEase() {
 
       {/* Expense List */}
       <div style={{padding:'12px 16px'}}>
-        <AnimatePresence>
-          {(() => {
-            const groups = [];
-            let lastMonth = null;
-            filtered.forEach(exp => {
-              const m = exp.date?.slice(0, 7) || '';
-              if (m !== lastMonth) {
-                const [y, mo] = m.split('-');
-                const label = m ? new Date(parseInt(y), parseInt(mo) - 1).toLocaleString('en-AU', {month:'long', year:'numeric'}) : 'Unknown';
-                groups.push(<div key={'h-'+m} style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.3,padding:'8px 2px 4px',letterSpacing:'0.08em'}}>{label}</div>);
-                lastMonth = m;
-              }
-              groups.push(exp);
+        {(() => {
+          const curMonth = new Date().toISOString().slice(0,7);
+          // Build month groups
+          const groupMap = [];
+          const seen = {};
+          filtered.forEach(exp => {
+            const m = exp.date?.slice(0,7) || '';
+            if (!seen[m]) { seen[m] = true; groupMap.push({m, exps:[]}); }
+            groupMap[groupMap.length-1].exps.push(exp);
+          });
+          return groupMap.map(({m, exps: groupExps}) => {
+            const [y, mo] = m.split('-');
+            const label = m ? new Date(parseInt(y), parseInt(mo)-1).toLocaleString('en-AU', {month:'long', year:'numeric'}) : 'Unknown';
+            const isCollapsed = !search.trim() && collapsedMonths.has(m) || (!search.trim() && m !== curMonth && !collapsedMonths.has('__expanded__'+m));
+            const monthTotal = groupExps.reduce((s,e) => s + (e.total_amount||0), 0);
+            const toggleMonth = () => setCollapsedMonths(prev => {
+              const next = new Set(prev);
+              if (isCollapsed) { next.delete(m); next.add('__expanded__'+m); }
+              else { next.add(m); next.delete('__expanded__'+m); }
+              return next;
             });
-            return groups;
-          })().map(exp => {
-            if (!exp.id) return exp;
-            const exp2 = exp;
+            return (
+              <div key={m}>
+                <button onClick={toggleMonth} style={{display:'flex',alignItems:'center',justifyContent:'space-between',width:'100%',background:'none',border:'none',cursor:'pointer',padding:'8px 2px 6px',fontFamily:MONO}}>
+                  <span style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.4,letterSpacing:'0.08em'}}>{label}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    {isCollapsed && <span style={{fontSize:10,...s.tabnum,opacity:0.3}}>{fmt(monthTotal,defCur)}</span>}
+                    <span style={{fontSize:10,opacity:0.25}}>{isCollapsed ? '▸' : '▾'}</span>
+                  </div>
+                </button>
+                <AnimatePresence>
+                  {!isCollapsed && groupExps.map(exp => {
+                    const exp2 = exp;
             const ci = catInfo(exp2.category);
             const isEditing = editingId === exp2.id;
             return (
@@ -1533,7 +1549,11 @@ export default function SplitEase() {
               </motion.div>
             );
           })}
-        </AnimatePresence>
+                </AnimatePresence>
+              </div>
+            );
+          });
+        })()}
         {filtered.length === 0 && (
           <div style={{textAlign:'center',padding:'60px 16px',fontSize:12,...s.upper,opacity:0.2}}>
             {expenses.length === 0 ? 'No expenses yet. Add one above!' : 'No results found.'}
