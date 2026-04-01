@@ -1389,7 +1389,11 @@ export default function SplitEase() {
                             <span style={s.tag(ci.bg,ci.tx)}>{exp.category}</span>
                             <span style={s.tag('#F0F0EA','#1a1a1a')}>{exp.date}</span>
                             {exp.original_currency && <span style={s.tag('#fef3c7','#92400e')}>{CURR_FLAG[exp.original_currency]||''} {fmt(exp.original_amount, exp.original_currency)}</span>}
-                            <span style={{...s.tag('#F0F0EA','#1a1a1a'),opacity:0.5}}>{exp.split_type}</span>
+                            {exp.split_type && exp.split_type !== 'settlement' && (
+                              <span style={{...s.tag('#F0F0EA','#1a1a1a'),opacity:0.5}}>
+                                {exp.split_type === 'exact' ? 'custom' : exp.split_type}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1398,7 +1402,7 @@ export default function SplitEase() {
                         <div style={{fontSize:10,...s.upper,opacity:0.35,marginTop:2}}>{exp.paid_by} paid</div>
                       </div>
                     </div>
-                    {exp.shares && Object.keys(exp.shares).length > 1 && (
+                    {exp.shares && Object.keys(exp.shares).length > 0 && exp.split_type !== 'personal' && exp.split_type !== 'settlement' && (
                       <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:8}}>
                         {Object.entries(exp.shares).map(([n,a])=>(
                           <span key={n} style={{fontSize:10,...s.upper,background:'#F0F0EA',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
