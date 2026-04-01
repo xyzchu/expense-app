@@ -66,7 +66,14 @@ serve(async (req) => {
     }
 
     const payer = paid_by || display_name || names[0];
-    const totalAmount = parseFloat(amount);
+    // Strip currency symbols and spaces MacroDroid might include e.g. "$12.50" or "AUD 12.50"
+    const cleanAmount = String(amount).replace(/[^0-9.]/g, '');
+    const totalAmount = parseFloat(cleanAmount);
+    if (!totalAmount || isNaN(totalAmount)) {
+      return new Response(JSON.stringify({ error: `Invalid amount: "${amount}" → cleaned: "${cleanAmount}"` }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Build equal shares
     const shareAmount = Math.round((totalAmount / names.length) * 100) / 100;
