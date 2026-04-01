@@ -23,7 +23,8 @@ serve(async (req) => {
       });
     }
 
-    const { secret, item, amount, currency, paid_by } = body;
+    const { secret, item, currency, paid_by } = body;
+    const amount = String(body.amount ?? '');
     if (!secret || !item || !amount) {
       return new Response(JSON.stringify({ error: 'Missing required fields: secret, item, amount' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },

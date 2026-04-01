@@ -1918,9 +1918,9 @@ export default function SplitEase() {
             <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid POST body (Content Body tab)</div>
             <div style={{display:'flex',alignItems:'flex-start',gap:6,marginBottom:6}}>
               <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.8}}>
-                {`{"secret":"${webhookToken}","item":"{merchant}","amount":{amount},"currency":"AUD"}`}
+                {`{"secret":"${webhookToken}","item":"{merchant}","amount":"{amount}","currency":"AUD"}`}
               </code>
-              <button onClick={()=>{navigator.clipboard?.writeText(`{"secret":"${webhookToken}","item":"{merchant}","amount":{amount},"currency":"AUD"}`);showToast('Body copied');}}
+              <button onClick={()=>{navigator.clipboard?.writeText(`{"secret":"${webhookToken}","item":"{merchant}","amount":"{amount}","currency":"AUD"}`);showToast('Body copied');}}
                 style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:2}}>
                 <Copy size={12}/>
               </button>
