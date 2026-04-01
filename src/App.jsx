@@ -312,6 +312,8 @@ export default function SplitEase() {
   // ── Settings Tab State ──
   const [editName, setEditName] = useState('');
   const [nameEditing, setNameEditing] = useState(false);
+  const [webhookToken, setWebhookToken] = useState(null);
+  const [webhookLoading, setWebhookLoading] = useState(false);
 
   // ── Settle State ──
   const [showSettle, setShowSettle] = useState(false);
@@ -435,6 +437,8 @@ export default function SplitEase() {
       if (ov) setCatOverrides(ov.value || {});
       if (cc) setCustomCats(cc.value || {});
     }
+    const {data: wt} = await sb.from('webhook_tokens').select('secret').eq('list_id', list.id).eq('user_id', (await sb.auth.getUser()).data.user?.id).maybeSingle();
+    setWebhookToken(wt?.secret || null);
   }, [fetchRates]);
 
   /* ── Save Setting ── */
@@ -1669,6 +1673,26 @@ export default function SplitEase() {
     );
   };
 
+  /* ── Webhook Token ── */
+  const generateWebhookToken = async () => {
+    if (!currentList || !user) return;
+    setWebhookLoading(true);
+    const secret = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');
+    const { error } = await sb.from('webhook_tokens').upsert(
+      { user_id: user.id, list_id: currentList.id, secret, display_name: myName },
+      { onConflict: 'user_id,list_id' }
+    );
+    if (!error) { setWebhookToken(secret); showToast('Webhook token generated'); }
+    setWebhookLoading(false);
+  };
+
+  const revokeWebhookToken = async () => {
+    if (!currentList || !user) return;
+    await sb.from('webhook_tokens').delete().eq('user_id', user.id).eq('list_id', currentList.id);
+    setWebhookToken(null);
+    showToast('Token revoked');
+  };
+
   /* ════════════════════════════════════════════════════════════
      SETTINGS TAB
      ════════════════════════════════════════════════════════════ */
@@ -1858,6 +1882,50 @@ export default function SplitEase() {
           )}
         </div>
       )}
+
+      {/* MacroDroid / Webhook */}
+      <div style={{...s.card,marginBottom:12}}>
+        <div style={{...s.label,marginBottom:8}}>Auto-Add from Bank Notifications</div>
+        <div style={{fontSize:11,opacity:0.5,lineHeight:1.6,marginBottom:10}}>
+          Use MacroDroid on Android to automatically add expenses when you receive a bank or Google Wallet notification.
+        </div>
+        {!webhookToken ? (
+          <button style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}} onClick={generateWebhookToken} disabled={webhookLoading}>
+            {webhookLoading ? 'Generating…' : 'Generate webhook token'}
+          </button>
+        ) : (
+          <div>
+            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Webhook URL</div>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+              <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.6}}>
+                {`https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook`}
+              </code>
+              <button onClick={()=>{navigator.clipboard?.writeText('https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook');showToast('URL copied');}}
+                style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Copy size={12}/>
+              </button>
+            </div>
+            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Secret token (keep private)</div>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+              <code style={{fontSize:10,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',letterSpacing:'0.05em'}}>
+                {webhookToken}
+              </code>
+              <button onClick={()=>{navigator.clipboard?.writeText(webhookToken);showToast('Token copied');}}
+                style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Copy size={12}/>
+              </button>
+            </div>
+            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid POST body</div>
+            <code style={{fontSize:9,background:'#F0F0EA',padding:'8px',borderRadius:8,display:'block',lineHeight:1.8,wordBreak:'break-all',marginBottom:10}}>
+              {`{"secret":"${webhookToken}","item":"[merchant]","amount":[amount],"currency":"AUD"}`}
+            </code>
+            <div style={{fontSize:10,opacity:0.35,lineHeight:1.6,marginBottom:10}}>
+              MacroDroid trigger: Notification received → parse merchant + amount with regex → HTTP POST to URL above with JSON body.
+            </div>
+            <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5,padding:0}} onClick={revokeWebhookToken}>Revoke token</button>
+          </div>
+        )}
+      </div>
 
       {/* Tips */}
       <div style={{...s.card,marginBottom:12}}>
