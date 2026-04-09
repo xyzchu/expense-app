@@ -125,8 +125,9 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [extracting,        setExtracting]        = useState(false);
   const [pendingExtraction, setPendingExtraction] = useState(null);
   const [showRaw,           setShowRaw]           = useState(false);
-  const fileRef = useRef(null);
-  const csvRef  = useRef(null);
+  const fileRef        = useRef(null);
+  const importCsvRef   = useRef(null);
+  const importJsonRef  = useRef(null);
 
   // csv import
   const [importPreview, setImportPreview] = useState(null); // { rows: [], dateRates: {} }
@@ -242,108 +243,105 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   const prevDate = dates[dates.indexOf(selDate) + 1] || null;
 
-  /* ── CSV import ── */
-  const handleCsvFile = (e) => {
+  /* ── import CSV (app's own export format) ── */
+  const handleImportCsvFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ({ target: { result } }) => {
-      const lines = result.split('\n');
-      const header = parseCSVLine(lines[0]);
-      const dateCols = header.slice(4).map(d => d.trim()).filter(Boolean);
-      const rows = [];
-      const importedDateRates = {}; // { [date]: { HKD:1, AUD:5.12, ... } }
+      const lines = result.split('\n').map(l => l.trimEnd());
+      let section = null, headers = [], rateCurrencies = [];
+      const importedAccounts = [], importedSnapshots = {}, importedDateRates = {};
 
-      for (const line of lines.slice(1)) {
-        if (!line.trim() || line.startsWith(',,,,')) continue;
+      for (const line of lines) {
+        if (!line.trim()) continue;
         const cols = parseCSVLine(line);
-        const [bank, account, currency, category] = cols;
-        if (!bank) continue;
-
-        // Parse "Exchange Rate,HKD/AUD,,,[5.12],[5.08],..." rows
-        if (bank.trim() === 'Exchange Rate') {
-          const pairMatch = account?.match(/HKD\/(\w+)/i);
-          if (pairMatch) {
-            const foreignCur = pairMatch[1].toUpperCase();
-            dateCols.forEach((rawDate, i) => {
-              const raw = cols[4 + i]?.replace(/[$," ]/g, '').trim();
-              const rate = parseFloat(raw);
-              if (!raw || isNaN(rate) || rate === 0) return;
-              const date = normalizeDate(rawDate);
-              if (date) {
-                if (!importedDateRates[date]) importedDateRates[date] = { HKD: 1 };
-                importedDateRates[date][foreignCur] = rate; // X HKD per 1 foreignCur
-              }
-            });
-          }
+        if (cols[0] === 'SECTION') { section = cols[1]; headers = []; continue; }
+        if (!headers.length) {
+          headers = cols;
+          if (section === 'exchange_rates') rateCurrencies = cols.slice(1);
           continue;
         }
-
-        if (['Adjustment', 'Remark', 'Total', ''].includes(bank.trim())) continue;
-        if (!account || !currency || !category) continue;
-
-        const snaps = [];
-        dateCols.forEach((rawDate, i) => {
-          const raw = cols[4 + i]?.replace(/[$," ]/g, '').trim();
-          if (!raw || raw === '-' || raw.includes('#')) return;
-          const balance = parseFloat(raw.replace(/\(([^)]+)\)/, '-$1'));
-          if (isNaN(balance)) return;
-          const date = normalizeDate(rawDate);
-          if (date) snaps.push({ date, balance });
-        });
-        if (snaps.length) rows.push({
-          bank: bank.trim(), account_name: account.trim(),
-          currency: currency.trim(), category: category.trim(), snapshots: snaps,
-        });
+        if (section === 'accounts') {
+          const obj = {}; headers.forEach((h, i) => { obj[h] = cols[i] ?? ''; });
+          let metadata = {};
+          try { metadata = JSON.parse(obj.metadata || '{}'); } catch {}
+          importedAccounts.push({ id: obj.id, bank: obj.bank, account_name: obj.account_name,
+            account_number: obj.account_number || null, currency: obj.currency, category: obj.category,
+            sort_order: parseInt(obj.sort_order) || 0, is_active: obj.is_active !== 'false', metadata });
+        } else if (section === 'snapshots') {
+          const [account_id, snapshot_date, balance] = cols;
+          if (account_id && snapshot_date && balance !== '') {
+            const key = `${account_id}|${snapshot_date}`;
+            importedSnapshots[key] = { account_id, snapshot_date, balance: parseFloat(balance) };
+          }
+        } else if (section === 'exchange_rates') {
+          const date = cols[0];
+          if (date) {
+            const r = {};
+            rateCurrencies.forEach((cur, i) => {
+              const v = parseFloat(cols[i + 1]);
+              if (!isNaN(v) && v > 0) r[cur] = v;
+            });
+            importedDateRates[date] = r;
+          }
+        }
       }
-      setImportPreview({ rows, dateRates: importedDateRates });
+      setImportPreview({
+        accounts: importedAccounts,
+        snapshots: Object.values(importedSnapshots),
+        dateRates: importedDateRates,
+      });
     };
     reader.readAsText(file);
     e.target.value = '';
   };
 
+  /* ── import JSON (app's own export format) ── */
+  const handleImportJsonFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ({ target: { result } }) => {
+      try {
+        const data = JSON.parse(result);
+        const importedDateRates = {};
+        for (const { date, rates } of (data.exchange_rates || [])) importedDateRates[date] = rates;
+        setImportPreview({
+          accounts: data.accounts || [],
+          snapshots: data.snapshots || [],
+          dateRates: importedDateRates,
+        });
+      } catch { showToast?.('Invalid JSON file'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  /* ── save import (shared by CSV + JSON) ── */
   const saveImport = async () => {
-    if (!importPreview?.rows?.length || !sb || !user) return;
+    if (!importPreview || !sb || !user) return;
     setImporting(true);
     try {
-      for (const row of importPreview.rows) {
-        let { data: existing } = await sb.from('financial_accounts')
-          .select('id').eq('user_id', user.id)
-          .eq('bank', row.bank).eq('account_name', row.account_name).eq('currency', row.currency)
-          .maybeSingle();
-        let accountId = existing?.id;
-        if (!accountId) {
-          const { data: ins } = await sb.from('financial_accounts').insert({
-            user_id: user.id, bank: row.bank, account_name: row.account_name,
-            currency: row.currency, category: row.category, sort_order: accounts.length + 1,
-          }).select('id').single();
-          accountId = ins?.id;
-        }
-        if (!accountId) continue;
-        const snapshotRows = row.snapshots.map(sn => ({
-          account_id: accountId, user_id: user.id, snapshot_date: sn.date, balance: sn.balance,
-        }));
-        for (let i = 0; i < snapshotRows.length; i += 100) {
-          await sb.from('financial_snapshots').upsert(
-            snapshotRows.slice(i, i + 100), { onConflict: 'account_id,snapshot_date' }
-          );
-        }
+      if (importPreview.accounts?.length) {
+        const accRows = importPreview.accounts.map(a => ({ ...a, user_id: user.id }));
+        for (let i = 0; i < accRows.length; i += 100)
+          await sb.from('financial_accounts').upsert(accRows.slice(i, i + 100), { onConflict: 'id' });
       }
-      // Save historical exchange rates
+      if (importPreview.snapshots?.length) {
+        const snapRows = importPreview.snapshots.map(s => ({ ...s, user_id: user.id }));
+        for (let i = 0; i < snapRows.length; i += 100)
+          await sb.from('financial_snapshots').upsert(snapRows.slice(i, i + 100), { onConflict: 'account_id,snapshot_date' });
+      }
       const drRows = Object.entries(importPreview.dateRates || {}).map(([date, r]) => ({
         user_id: user.id, snapshot_date: date, rates: r,
       }));
-      for (let i = 0; i < drRows.length; i += 100) {
-        await sb.from('financial_date_rates').upsert(
-          drRows.slice(i, i + 100), { onConflict: 'user_id,snapshot_date' }
-        );
-      }
+      for (let i = 0; i < drRows.length; i += 100)
+        await sb.from('financial_date_rates').upsert(drRows.slice(i, i + 100), { onConflict: 'user_id,snapshot_date' });
       setImportPreview(null);
       await loadAll();
       showToast?.('Import complete');
-    } catch (err) {
-      showToast?.('Import error: ' + err.message);
-    }
+    } catch (err) { showToast?.('Import error: ' + err.message); }
     setImporting(false);
   };
 
@@ -585,6 +583,36 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     showToast?.('Exported');
   };
 
+  /* ── export CSV ── */
+  const exportCSV = () => {
+    const lines = [];
+    // accounts
+    lines.push('SECTION,accounts');
+    lines.push('id,bank,account_name,account_number,currency,category,sort_order,is_active,metadata');
+    for (const a of accounts) {
+      const meta = JSON.stringify(a.metadata || {}).replace(/"/g, '""');
+      lines.push([a.id, a.bank, a.account_name, a.account_number || '', a.currency, a.category, a.sort_order, a.is_active, `"${meta}"`].join(','));
+    }
+    // snapshots
+    lines.push('', 'SECTION,snapshots', 'account_id,snapshot_date,balance');
+    for (const s of [...snapshots].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date)))
+      lines.push([s.account_id, s.snapshot_date, s.balance].join(','));
+    // exchange rates
+    const rateEntries = Object.entries(dateRates).sort(([a], [b]) => a.localeCompare(b));
+    if (rateEntries.length) {
+      const allCurs = [...new Set(rateEntries.flatMap(([, r]) => Object.keys(r)))].sort();
+      lines.push('', 'SECTION,exchange_rates', ['snapshot_date', ...allCurs].join(','));
+      for (const [date, r] of rateEntries)
+        lines.push([date, ...allCurs.map(c => r[c] != null ? r[c] : '')].join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `finances-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast?.('Exported CSV');
+  };
+
   /* ── clear data ── */
   const clearAllData = async () => {
     await sb.from('financial_date_rates').delete().eq('user_id', user.id);
@@ -607,12 +635,9 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
           <span style={{ fontSize: 11 }}>Scan</span>
         </button>
-        <button onClick={() => csvRef.current?.click()}
-          style={{ ...S.btnGhost, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Upload size={14} /><span style={{ fontSize: 11 }}>CSV</span>
-        </button>
         <input ref={fileRef} type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleExtractFile} />
-        <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvFile} />
+        <input ref={importCsvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImportCsvFile} />
+        <input ref={importJsonRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJsonFile} />
       </div>
     </div>
   );
@@ -1178,9 +1203,20 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       <div style={S.card}>
         <div style={{ ...S.label, marginBottom: 12 }}>Data Management</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button onClick={exportData} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <Download size={14} /> Export Data (JSON)
-          </button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <button onClick={exportData} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Download size={14} /> Export JSON
+            </button>
+            <button onClick={exportCSV} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Download size={14} /> Export CSV
+            </button>
+            <button onClick={() => importCsvRef.current?.click()} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Upload size={14} /> Import CSV
+            </button>
+            <button onClick={() => importJsonRef.current?.click()} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Upload size={14} /> Import JSON
+            </button>
+          </div>
           <button onClick={() => setConfirmClearData(true)} style={{ ...S.btnRed, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <AlertTriangle size={14} /> Clear All Financial Data
           </button>
@@ -1248,19 +1284,19 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         </motion.div>
       )}
 
-      {/* CSV import preview */}
+      {/* Import preview */}
       {importPreview && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
             style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 480 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>CSV Import Preview</div>
+              <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Import Preview</div>
               <button onClick={() => setImportPreview(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <div style={{ fontFamily: MONO, fontSize: 12, color: '#374151', marginBottom: 8 }}>
-              {importPreview.rows?.length || 0} accounts
-              · {importPreview.rows?.reduce((s, r) => s + r.snapshots.length, 0) || 0} snapshots
+              {importPreview.accounts?.length || 0} accounts
+              · {importPreview.snapshots?.length || 0} snapshots
               {Object.keys(importPreview.dateRates || {}).length > 0 && (
                 <span style={{ color: '#06b6d4', marginLeft: 8 }}>
                   · {Object.keys(importPreview.dateRates).length} exchange rate dates
@@ -1268,13 +1304,13 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
               )}
             </div>
             <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 16, fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>
-              {importPreview.rows?.slice(0, 10).map((r, i) => (
+              {importPreview.accounts?.slice(0, 10).map((a, i) => (
                 <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid #f3f4f6' }}>
-                  {r.bank} / {r.account_name} ({r.currency}, {r.category}) — {r.snapshots.length} dates
+                  {a.bank} / {a.account_name} ({a.currency}, {a.category})
                 </div>
               ))}
-              {(importPreview.rows?.length || 0) > 10 && (
-                <div style={{ color: '#9ca3af' }}>…and {importPreview.rows.length - 10} more</div>
+              {(importPreview.accounts?.length || 0) > 10 && (
+                <div style={{ color: '#9ca3af' }}>…and {importPreview.accounts.length - 10} more</div>
               )}
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
