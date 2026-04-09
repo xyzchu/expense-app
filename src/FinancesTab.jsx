@@ -681,7 +681,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const TableView = (
     <div style={{ padding: '0 16px' }}>
       {CATS.map(cat => {
-        const catAccounts = accounts.filter(a => a.category === cat);
+        const catAccounts = accounts.filter(a => a.category === cat).sort((a, b) => a.bank.localeCompare(b.bank) || a.account_name.localeCompare(b.account_name));
         if (!catAccounts.length) return null;
         const total = catTotalOnDate(cat, selDate);
         return (
