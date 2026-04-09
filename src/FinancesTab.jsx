@@ -762,17 +762,18 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   const DatePills = (
     <div style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
-      <button
-        style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
-        onClick={() => {
-          const today = new Date().toISOString().slice(0, 10);
-          setEntryDate(today);
-          setSelDate('');
-          setEntryValues({});
-          setView('table');
-        }}>
-        + New
-      </button>
+      {view === 'table' && (
+        <button
+          style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
+          onClick={() => {
+            const today = new Date().toISOString().slice(0, 10);
+            setEntryDate(today);
+            setSelDate('');
+            setEntryValues({});
+          }}>
+          + New
+        </button>
+      )}
       {dates.map(d => (
         <button key={d} style={S.pill(d === selDate)} onClick={() => { setSelDate(d); setEntryDate(d); }}>{fmtDate(d)}</button>
       ))}
@@ -834,50 +835,52 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
     return (
     <div style={{ padding: '0 16px' }}>
-      {/* Date selector + helpers */}
-      <div style={{ ...S.card, padding: '12px 14px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <div style={{ ...S.label, flexShrink: 0, fontSize: 10 }}>Date</div>
-          <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} style={{ ...S.input, flex: 1 }} />
-        </div>
-        {/* Live rates */}
-        {(() => {
-          const liveRates = appToHKD();
-          const entryCurrencies = [...new Set(accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency))].sort();
-          if (!entryCurrencies.length) return null;
-          return (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center' }}>
-              <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
-              {entryCurrencies.map(cur => (
-                <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 7px', borderRadius: 6 }}>
-                  1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
-                </span>
-              ))}
-            </div>
-          );
-        })()}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={copyFromLatest} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
-            <Copy size={12} /> Copy from latest
-          </button>
-          <button onClick={fetchExpenseSuggestion} disabled={loadingExpenses}
-            style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
-            {loadingExpenses ? <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={12} />}
-            Load Expenses
-          </button>
-        </div>
-        {expenseSuggest && (
-          <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
-            <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Expenses from "{homeListName}"{expenseSuggest.person ? ` · ${expenseSuggest.person}` : ''}</div>
-            <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
-              {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
-            </div>
-            <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
-              {fmtNum(expenseSuggest.total, expenseSuggest.currency)}
-            </div>
+      {/* New snapshot controls — only shown when no historical date selected */}
+      {!selDate && (
+        <div style={{ ...S.card, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div style={{ ...S.label, flexShrink: 0, fontSize: 10 }}>Date</div>
+            <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} style={{ ...S.input, flex: 1 }} />
           </div>
-        )}
-      </div>
+          {/* Live rates */}
+          {(() => {
+            const liveRates = appToHKD();
+            const entryCurrencies = [...new Set(accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency))].sort();
+            if (!entryCurrencies.length) return null;
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center' }}>
+                <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
+                {entryCurrencies.map(cur => (
+                  <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 7px', borderRadius: 6 }}>
+                    1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={copyFromLatest} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
+              <Copy size={12} /> Copy from latest
+            </button>
+            <button onClick={fetchExpenseSuggestion} disabled={loadingExpenses}
+              style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
+              {loadingExpenses ? <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={12} />}
+              Load Expenses
+            </button>
+          </div>
+          {expenseSuggest && (
+            <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Expenses from "{homeListName}"{expenseSuggest.person ? ` · ${expenseSuggest.person}` : ''}</div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
+                {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
+                {fmtNum(expenseSuggest.total, expenseSuggest.currency)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Exchange rates for selected snapshot */}
       {usedCurrencies.length > 0 && selDate && (
