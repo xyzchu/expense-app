@@ -1045,8 +1045,8 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           Set account number (for PDF/image matching), currency, category. For Points/Miles accounts, set miles ratio (e.g. 48 → balance ÷ 48 × 1000 = miles).
         </div>
 
-        {accounts.map((acc, i) => (
-          <div key={acc.id} style={{ borderBottom: i < accounts.length - 1 ? '1px solid #f3f4f6' : 'none', paddingBottom: 10, marginBottom: 10 }}>
+        {[...accounts].sort((a, b) => a.bank.localeCompare(b.bank) || a.account_name.localeCompare(b.account_name)).map((acc, i, arr) => (
+          <div key={acc.id} style={{ borderBottom: i < arr.length - 1 ? '1px solid #f3f4f6' : 'none', paddingBottom: 10, marginBottom: 10 }}>
             {editingAccId === acc.id ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
