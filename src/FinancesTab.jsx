@@ -374,28 +374,64 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     if (!xaiApiKey) { showToast?.('Set xAI API key in Settings first'); return; }
     setExtracting(true);
     try {
-      const base64 = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(',')[1]);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-      // Use the configured vision model
-      const mediaType = file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
-      const resp = await fetch('https://api.x.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      const prompt = 'Extract from this bank statement: account number (last 4 digits only), statement date (YYYY-MM-DD), and total account balance as a number. Return ONLY valid JSON with no markdown: {"account_number":"1234","date":"YYYY-MM-DD","balance":12345.67}';
+
+      let requestBody;
+      if (isPDF) {
+        // Step 1: upload PDF via Files API
+        showToast?.('Uploading PDF…');
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('purpose', 'assistants');
+        const uploadResp = await fetch('https://api.x.ai/v1/files', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${xaiApiKey}` },
+          body: formData,
+        });
+        const uploadJson = await uploadResp.json();
+        if (uploadJson.error) throw new Error('Upload error: ' + (uploadJson.error.message || JSON.stringify(uploadJson.error)));
+        const fileId = uploadJson.id;
+        if (!fileId) throw new Error('No file_id returned from upload');
+
+        // Step 2: chat completion referencing the file_id
+        requestBody = {
+          model: visionModel,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'file', file: { file_id: fileId } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+          temperature: 0,
+        };
+      } else {
+        // Images: base64 inline
+        const base64 = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result.split(',')[1]);
+          reader.onerror = rej;
+          reader.readAsDataURL(file);
+        });
+        const mediaType = file.type || 'image/jpeg';
+        requestBody = {
           model: visionModel,
           messages: [{
             role: 'user',
             content: [
               { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'high' } },
-              { type: 'text', text: 'Extract from this bank statement or screenshot: account number (last 4 digits only), statement date (YYYY-MM-DD), and total account balance as a number. Return ONLY valid JSON with no markdown: {"account_number":"1234","date":"YYYY-MM-DD","balance":12345.67}' }
-            ]
+              { type: 'text', text: prompt },
+            ],
           }],
           temperature: 0,
-        })
+        };
+      }
+
+      const resp = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
       });
       const json = await resp.json();
       if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
