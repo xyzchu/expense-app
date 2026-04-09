@@ -152,7 +152,11 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [showRatesFor,    setShowRatesFor]     = useState(false);
 
   // confirm delete
-  const [confirmDeleteAcc, setConfirmDeleteAcc] = useState(null);
+  const [confirmDeleteAcc,  setConfirmDeleteAcc]  = useState(null);
+  const [confirmDeleteSnap, setConfirmDeleteSnap] = useState(false);
+
+  // inline balance editing
+  const [editingBalance, setEditingBalance] = useState(null); // { accId, value }
 
   /* ── derived dates ── */
   useEffect(() => {
@@ -512,6 +516,32 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     showToast?.('Account deleted');
   };
 
+  /* ── save inline balance edit ── */
+  const saveBalanceEdit = async () => {
+    if (!editingBalance || !selDate || !sb || !user) return;
+    const { accId, value } = editingBalance;
+    const num = parseFloat(value);
+    if (isNaN(num)) { setEditingBalance(null); return; }
+    await sb.from('financial_snapshots').upsert(
+      { account_id: accId, user_id: user.id, snapshot_date: selDate, balance: num },
+      { onConflict: 'account_id,snapshot_date' }
+    );
+    setEditingBalance(null);
+    await loadAll();
+  };
+
+  /* ── delete entire snapshot date ── */
+  const deleteSnapshot = async () => {
+    if (!selDate || !sb || !user) return;
+    await sb.from('financial_snapshots').delete().eq('user_id', user.id).eq('snapshot_date', selDate);
+    await sb.from('financial_date_rates').delete().eq('user_id', user.id).eq('snapshot_date', selDate);
+    setConfirmDeleteSnap(false);
+    const newDates = dates.filter(d => d !== selDate);
+    setSelDate(newDates[0] || '');
+    await loadAll();
+    showToast?.('Snapshot deleted');
+  };
+
   /* ── AI chat ── */
   const buildContext = () => {
     const recentDates = dates.slice(0, 24);
@@ -758,6 +788,15 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
     return (
     <div style={{ padding: '0 16px' }}>
+      {/* Delete snapshot button */}
+      {selDate && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button onClick={() => setConfirmDeleteSnap(true)}
+            style={{ ...S.btnGhost, padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#dc2626', borderColor: '#fecaca' }}>
+            <Trash2 size={12} /> Delete snapshot
+          </button>
+        </div>
+      )}
       {/* Exchange rates for this snapshot */}
       {usedCurrencies.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
@@ -796,9 +835,10 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
                 const balance = bal(acc.id, selDate);
                 const miles = cat === 'Points/Miles' && balance != null && acc.metadata?.miles_ratio
                   ? Math.round(balance / acc.metadata.miles_ratio * 1000) : null;
+                const isEditing = editingBalance?.accId === acc.id;
                 return (
                   <div key={acc.id} style={{
-                    display: 'grid', gridTemplateColumns: '1fr auto auto auto',
+                    display: 'grid', gridTemplateColumns: '1fr auto auto',
                     padding: '10px 14px', gap: 8, alignItems: 'center',
                     borderBottom: i < catAccounts.length - 1 ? '1px solid #f3f4f6' : 'none',
                   }}>
@@ -810,13 +850,22 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
                       </div>
                     </div>
                     <span style={{ ...S.label, color: '#9ca3af', fontSize: 9 }}>{acc.currency}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, textAlign: 'right',
-                      color: balance == null ? '#d1d5db' : cat === 'Credit Card' ? '#ef4444' : '#1a1a1a' }}>
-                      {balance != null ? fmtNum(balance, acc.currency) : '—'}
-                    </span>
-                    <button onClick={() => setConfirmDeleteAcc(acc)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', padding: 2 }}>
-                      <Trash2 size={12} />
-                    </button>
+                    {isEditing ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input autoFocus type="number" value={editingBalance.value}
+                          onChange={e => setEditingBalance(v => ({ ...v, value: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') saveBalanceEdit(); if (e.key === 'Escape') setEditingBalance(null); }}
+                          style={{ ...S.inputSm, width: 90 }} />
+                        <button onClick={saveBalanceEdit} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a', padding: 2 }}><Check size={13} /></button>
+                        <button onClick={() => setEditingBalance(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 2 }}><X size={13} /></button>
+                      </div>
+                    ) : (
+                      <span onClick={() => setEditingBalance({ accId: acc.id, value: balance != null ? String(balance) : '' })}
+                        style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, textAlign: 'right', cursor: 'pointer',
+                          color: balance == null ? '#d1d5db' : cat === 'Credit Card' ? '#ef4444' : '#1a1a1a' }}>
+                        {balance != null ? fmtNum(balance, acc.currency) : '—'}
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -1451,6 +1500,27 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setConfirmDeleteAcc(null)} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
               <button onClick={() => deleteAccount(confirmDeleteAcc)} style={{ ...S.btnRed, flex: 1 }}>Delete</button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Confirm delete snapshot */}
+      {confirmDeleteSnap && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
+            style={{ background: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+              <AlertTriangle size={20} color="#dc2626" />
+              <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700 }}>Delete Snapshot?</div>
+            </div>
+            <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
+              All balances for <strong>{fmtDate(selDate)}</strong> will be deleted, including the exchange rates for that date.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmDeleteSnap(false)} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
+              <button onClick={deleteSnapshot} style={{ ...S.btnRed, flex: 1 }}>Delete</button>
             </div>
           </motion.div>
         </motion.div>
