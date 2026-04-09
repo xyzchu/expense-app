@@ -205,7 +205,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     const hkdPerUSD = rates?.HKD || 7.82;
     const h = {};
     for (const [cur, usdRate] of Object.entries(rates || FALLBACK_HKD)) {
-      if (usdRate) h[cur] = hkdPerUSD / usdRate;
+      if (usdRate) h[cur] = parseFloat((hkdPerUSD / usdRate).toFixed(8));
     }
     if (!h.HKD) h.HKD = 1;
     return h;
