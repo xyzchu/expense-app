@@ -145,6 +145,9 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [xaiApiKey,       setXaiApiKey]       = useState('');
   const [showXaiKey,      setShowXaiKey]       = useState(false);
   const [savingKey,       setSavingKey]        = useState(false);
+  const [xaiModel,        setXaiModel]        = useState('grok-4-1-fast-reasoning');
+  const [xaiModels,       setXaiModels]       = useState([]);
+  const [loadingModels,   setLoadingModels]   = useState(false);
   const [confirmClearData,setConfirmClearData] = useState(false);
   const [showRatesFor,    setShowRatesFor]     = useState(false);
 
@@ -194,6 +197,8 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       if (k?.value) setXaiApiKey(k.value);
       const c = settings.find(r => r.key === 'finances_display_currency');
       if (c?.value) setDisplayCurrency(c.value);
+      const m = settings.find(r => r.key === 'xai_model');
+      if (m?.value) setXaiModel(m.value);
     }
   }, [user, sb]);
 
@@ -363,7 +368,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         method: 'POST',
         headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'grok-4.1-fast',
+          model: xaiModel,
           messages: [{
             role: 'user',
             content: [
@@ -533,7 +538,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         method: 'POST',
         headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'grok-4.1-fast',
+          model: xaiModel,
           messages: [
             { role: 'system', content: `You are a personal financial assistant. Answer concisely.\n\n${buildContext()}` },
             ...chatMessages.filter(m => m.role !== 'system'),
@@ -560,6 +565,26 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     await saveUserSetting('xai_api_key', xaiApiKey);
     setSavingKey(false);
     showToast?.('API key saved');
+  };
+
+  const fetchModels = async (key = xaiApiKey) => {
+    if (!key) { showToast?.('Enter API key first'); return; }
+    setLoadingModels(true);
+    try {
+      const res = await fetch('https://api.x.ai/v1/models', {
+        headers: { Authorization: `Bearer ${key}` }
+      });
+      const json = await res.json();
+      const ids = (json.data || []).map(m => m.id).sort();
+      if (ids.length) { setXaiModels(ids); showToast?.(`${ids.length} models loaded`); }
+      else showToast?.('No models returned');
+    } catch (err) { showToast?.('Error fetching models: ' + err.message); }
+    setLoadingModels(false);
+  };
+
+  const changeXaiModel = (model) => {
+    setXaiModel(model);
+    saveUserSetting('xai_model', model);
   };
 
   const changeDisplayCurrency = (cur) => {
@@ -1110,7 +1135,21 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             {savingKey ? <RefreshCw size={14} /> : <Check size={14} />}
           </button>
         </div>
-        <div style={{ ...S.label, fontSize: 9, opacity: 0.6 }}>Used for AI chat and statement scanning.</div>
+        <div style={{ ...S.label, marginBottom: 8, marginTop: 12 }}>Model</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <select value={xaiModel} onChange={e => changeXaiModel(e.target.value)}
+            style={{ ...S.select, flex: 1, fontSize: 12 }}>
+            {xaiModels.length === 0
+              ? <option value={xaiModel}>{xaiModel}</option>
+              : xaiModels.map(m => <option key={m} value={m}>{m}</option>)
+            }
+          </select>
+          <button onClick={() => fetchModels()} disabled={loadingModels}
+            style={{ ...S.btnGhost, padding: '8px 10px', flexShrink: 0 }} title="Fetch available models">
+            <RefreshCw size={14} style={loadingModels ? { animation: 'spin 1s linear infinite' } : {}} />
+          </button>
+        </div>
+        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Used for AI chat and statement scanning. Tap refresh to load models from xAI.</div>
       </div>
 
       {/* Account mappings */}
