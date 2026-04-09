@@ -514,14 +514,32 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   /* ── AI chat ── */
   const buildContext = () => {
-    const recentDates = dates.slice(0, 12);
-    let ctx = `Financial data (balances in native currency):\nAccounts: ${accounts.length}\n\n`;
+    const recentDates = dates.slice(0, 24);
+    let ctx = `Financial data. All HKD equivalents use the historical exchange rates recorded for each date.\n`;
+    ctx += `Accounts: ${accounts.length}\n\n`;
     for (const date of recentDates) {
-      ctx += `${date}:\n`;
+      const r = getRatesForDate(date);
+      // category totals in HKD
+      const totals = {};
       for (const acc of accounts) {
         const b = bal(acc.id, date);
-        if (b != null) ctx += `  ${acc.bank}/${acc.account_name} (${acc.currency}, ${acc.category}): ${b}\n`;
+        if (b == null) continue;
+        const hkd = Math.round(cvtHKD(b, acc.currency, 'HKD', r));
+        totals[acc.category] = (totals[acc.category] || 0) + hkd;
       }
+      if (!Object.keys(totals).length) continue;
+      ctx += `${date} (rates: ${Object.entries(r).filter(([c]) => c !== 'HKD').map(([c, v]) => `1 ${c}=HKD ${v}`).join(', ')}):\n`;
+      // per-account line: native + HKD
+      for (const acc of accounts) {
+        const b = bal(acc.id, date);
+        if (b == null) continue;
+        const hkd = Math.round(cvtHKD(b, acc.currency, 'HKD', r));
+        ctx += `  ${acc.bank}/${acc.account_name} [${acc.category}]: ${acc.currency} ${b} = HKD ${hkd}\n`;
+      }
+      // category subtotals
+      for (const [cat, total] of Object.entries(totals))
+        ctx += `  SUBTOTAL ${cat}: HKD ${total}\n`;
+      ctx += '\n';
     }
     return ctx;
   };
