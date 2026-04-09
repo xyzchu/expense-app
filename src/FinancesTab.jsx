@@ -379,14 +379,20 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
       let requestBody;
       if (isPDF) {
-        // Step 1: upload PDF via Files API
+        // Step 1: upload PDF via Supabase edge function proxy (avoids CORS on xAI /v1/files)
         showToast?.('Uploading PDF…');
         const formData = new FormData();
         formData.append('file', file);
         formData.append('purpose', 'assistants');
-        const uploadResp = await fetch('https://api.x.ai/v1/files', {
+        const { data: { session } } = await sb.auth.getSession();
+        const jwt = session?.access_token || '';
+        const uploadResp = await fetch('https://datppieeeobzzmaighwt.supabase.co/functions/v1/xai-file-upload', {
           method: 'POST',
-          headers: { Authorization: `Bearer ${xaiApiKey}` },
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            'x-xai-key': xaiApiKey,
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
           body: formData,
         });
         const uploadJson = await uploadResp.json();
