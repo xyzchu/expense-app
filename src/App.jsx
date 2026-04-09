@@ -1,17 +1,19 @@
 // supaBase account xyzchu@hotmail.com
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Pencil, Trash2, X, Send, LogOut, Plus, Users, Check, Copy,
   Upload, Download, UserPlus, Home as HomeIcon, BarChart3,
   Settings as SettingsIcon, ChevronDown, ChevronUp, ArrowRight,
-  RefreshCw, Eye, EyeOff
+  RefreshCw, Eye, EyeOff, TrendingUp
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
 import sb from './supabaseClient';
+import FinancesTab from './FinancesTab';
 import { usePushNotifications } from './usePushNotifications';
 
 /* ══════════════════════════════════════════════════════════════
@@ -1965,6 +1967,7 @@ export default function SplitEase() {
       {tab === 'home' && HomeTab()}
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
+      {tab === 'finances' && <FinancesTab user={user} sb={sb} showToast={showToast} rates={rates} MONO={MONO} />}
 
       {/* Footer */}
       <div style={{
@@ -1986,6 +1989,7 @@ export default function SplitEase() {
         {[
           {id:'home',icon:HomeIcon,label:'Home'},
           {id:'stats',icon:BarChart3,label:'Stats'},
+          {id:'finances',icon:TrendingUp,label:'Finances'},
           {id:'settings',icon:SettingsIcon,label:'Settings'},
         ].map(t=>(
           <button key={t.id} onClick={()=>{setTab(t.id);setEditingId(null);}}
