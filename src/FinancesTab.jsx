@@ -705,7 +705,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
                 border: isHistorical ? '1px solid #bfdbfe' : 'none',
                 padding: '2px 8px', borderRadius: 6,
               }}>
-                1 {cur} = {fmtNum(rate, displayCurrency)}
+                1 {cur} = {displayCurrency} {rate.toFixed(2)}
               </span>
             );
           })}
