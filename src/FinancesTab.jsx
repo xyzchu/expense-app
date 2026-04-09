@@ -148,11 +148,13 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [showXaiKey,      setShowXaiKey]       = useState(false);
   const [savingKey,       setSavingKey]        = useState(false);
   const [xaiModel,        setXaiModel]        = useState('grok-4-1-fast-reasoning');
+  const [visionModel,     setVisionModel]     = useState('grok-2-vision-1212');
   const [xaiModels,       setXaiModels]       = useState([]);
   const [loadingModels,   setLoadingModels]   = useState(false);
   const [confirmClearData,setConfirmClearData] = useState(false);
   const [showRatesFor,    setShowRatesFor]     = useState(false);
   const [homeListName,    setHomeListName]     = useState('Home');
+  const [expensePerson,   setExpensePerson]   = useState(''); // display_name to filter; '' = mine
 
   // confirm delete
   const [confirmDeleteAcc,  setConfirmDeleteAcc]  = useState(null);
@@ -208,6 +210,10 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       if (m?.value) setXaiModel(m.value);
       const hl = settings.find(r => r.key === 'home_list_name');
       if (hl?.value) setHomeListName(hl.value);
+      const vm = settings.find(r => r.key === 'vision_model');
+      if (vm?.value) setVisionModel(vm.value);
+      const ep = settings.find(r => r.key === 'expense_person');
+      if (ep?.value) setExpensePerson(ep.value);
     }
   }, [user, sb]);
 
@@ -374,8 +380,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         reader.onerror = rej;
         reader.readAsDataURL(file);
       });
-      // Use a vision-capable model for scan; fall back to current model if it includes "vision"
-      const visionModel = xaiModel.includes('vision') ? xaiModel : 'grok-2-vision-1212';
+      // Use the configured vision model
       const mediaType = file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
       const resp = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
@@ -490,24 +495,27 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       const hkdRates = getRatesForDate(entryDate);
       let total = 0;
       let listDefaultCur = homeLists[0].default_currency || 'HKD';
+      // Get all distinct display_names in these lists to populate the person dropdown later
+      const allNames = [...new Set(memberships.filter(m => homeListIds.has(m.list_id)).map(m => m.display_name))];
       for (const mem of memberships.filter(m => homeListIds.has(m.list_id))) {
         const { data: exps } = await sb.from('expenses')
           .select('total_amount, shares, original_currency, split_type, list_id')
           .eq('list_id', mem.list_id).neq('split_type', 'settlement')
           .gte('date', prevSnapDate).lte('date', entryDate);
         for (const exp of exps || []) {
-          const userShare = exp.shares?.[mem.display_name];
+          // Use configured person name, or fall back to the membership's display_name
+          const targetName = expensePerson || mem.display_name;
+          const userShare = exp.shares?.[targetName];
           if (userShare != null) {
             const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
-            // Convert to list's default currency
             total += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
           }
         }
       }
-      setExpenseSuggest({ total, currency: listDefaultCur, fromDate: prevSnapDate, toDate: entryDate });
+      setExpenseSuggest({ total, currency: listDefaultCur, fromDate: prevSnapDate, toDate: entryDate, person: expensePerson || allNames[0] || '' });
     } catch (err) { console.error('Expense suggestion error:', err); }
     setLoadingExpenses(false);
-  }, [sb, user, entryDate, dates, getRatesForDate, homeListName]);
+  }, [sb, user, entryDate, dates, getRatesForDate, homeListName, expensePerson]);
 
   /* ── add account ── */
   const addAccount = async () => {
@@ -754,8 +762,19 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   const DatePills = (
     <div style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
+      <button
+        style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
+        onClick={() => {
+          const today = new Date().toISOString().slice(0, 10);
+          setEntryDate(today);
+          setSelDate('');
+          setEntryValues({});
+          setView('table');
+        }}>
+        + New
+      </button>
       {dates.map(d => (
-        <button key={d} style={S.pill(d === selDate)} onClick={() => setSelDate(d)}>{fmtDate(d)}</button>
+        <button key={d} style={S.pill(d === selDate)} onClick={() => { setSelDate(d); setEntryDate(d); }}>{fmtDate(d)}</button>
       ))}
     </div>
   );
@@ -849,7 +868,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         </div>
         {expenseSuggest && (
           <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
-            <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Expenses from "{homeListName}"</div>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Expenses from "{homeListName}"{expenseSuggest.person ? ` · ${expenseSuggest.person}` : ''}</div>
             <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
               {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
             </div>
@@ -882,39 +901,30 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         </div>
       )}
 
-      {/* Account rows grouped by category */}
-      {CATS.map(cat => {
-        const catAccounts = accounts.filter(a => a.category === cat).sort((a, b) => a.bank.localeCompare(b.bank) || a.account_name.localeCompare(b.account_name));
-        if (!catAccounts.length) return null;
-        const total = selDate ? catTotalOnDate(cat, selDate) : null;
+      {/* Account rows grouped by bank */}
+      {[...new Set(accounts.map(a => a.bank))].sort().map(bank => {
+        const bankAccs = accounts.filter(a => a.bank === bank).sort((a, b) => a.sort_order - b.sort_order || a.account_name.localeCompare(b.account_name));
         return (
-          <div key={cat} style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-              <span style={S.catBadge(cat)}>{cat}</span>
-              {total != null && cat !== 'Points/Miles' && (
-                <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: cat === 'Credit Card' ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
-                  {fmtNum(total, displayCurrency)}
-                </span>
-              )}
-            </div>
+          <div key={bank} style={{ marginBottom: 14 }}>
+            <div style={{ ...S.label, marginBottom: 5, paddingLeft: 2 }}>{bank}</div>
             <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-              {catAccounts.map((acc, i) => {
+              {bankAccs.map((acc, i) => {
                 const savedBal = selDate ? bal(acc.id, selDate) : null;
-                const miles = cat === 'Points/Miles' && savedBal != null && acc.metadata?.miles_ratio
+                const miles = acc.category === 'Points/Miles' && savedBal != null && acc.metadata?.miles_ratio
                   ? Math.round(savedBal / acc.metadata.miles_ratio * 1000) : null;
                 return (
                   <div key={acc.id} style={{
                     display: 'grid', gridTemplateColumns: '1fr auto 120px',
                     padding: '10px 14px', gap: 8, alignItems: 'center',
-                    borderBottom: i < catAccounts.length - 1 ? '1px solid #f3f4f6' : 'none',
+                    borderBottom: i < bankAccs.length - 1 ? '1px solid #f3f4f6' : 'none',
                   }}>
                     <div>
                       <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: '#111' }}>
                         {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
                       </div>
-                      <div style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>
-                        {acc.bank}
-                        {miles != null && <span style={{ color: '#06b6d4', marginLeft: 6 }}>≈ {miles.toLocaleString()} mi</span>}
+                      <div style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={S.catBadge(acc.category)}>{acc.category}</span>
+                        {miles != null && <span style={{ color: '#06b6d4' }}>≈ {miles.toLocaleString()} mi</span>}
                       </div>
                     </div>
                     <span style={{ ...S.label, color: '#9ca3af', fontSize: 10 }}>{acc.currency === 'PTS' ? 'PTS' : acc.currency}</span>
@@ -923,7 +933,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
                       value={entryValues[acc.id] ?? ''}
                       onChange={e => setEntryValues(prev => ({ ...prev, [acc.id]: e.target.value }))}
                       placeholder={savedBal != null ? String(savedBal) : '—'}
-                      style={{ ...S.inputSm, color: entryValues[acc.id] != null && entryValues[acc.id] !== '' && entryValues[acc.id] !== String(savedBal) ? '#1a1a1a' : '#9ca3af' }}
+                      style={{ ...S.inputSm, color: entryValues[acc.id] != null && entryValues[acc.id] !== '' ? '#1a1a1a' : '#9ca3af' }}
                     />
                   </div>
                 );
@@ -997,11 +1007,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             { label: 'Cash',          value: cash,    prev: prevCash    },
             { label: 'Securities',    value: sec,     prev: prevSec     },
             { label: '− Credit Card', value: cc,      prev: prevCC,     negate: true },
-            { divider: true },
-            { label: 'Income',        value: income,  prev: prevIncome  },
-            { label: '− Expense',     value: expense, prev: prevExpense, negate: true },
           ].map((row, ri) => {
-            if (row.divider) return <div key={ri} style={{ borderTop: '1px solid #374151', margin: '6px 0' }} />;
             const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
             return (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -1019,8 +1025,45 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
               </div>
             );
           })}
-          {/* Net Income */}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          {/* Net Worth = Cash + Securities - CC */}
+          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#fff' }}>Net Worth</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {prevNetWorth != null && (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: (netWorth - prevNetWorth) >= 0 ? '#4ade80' : '#f87171' }}>
+                  {(netWorth - prevNetWorth) >= 0 ? '+' : ''}{fmtNum(netWorth - prevNetWorth, displayCurrency)}
+                  {' '}({fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)})
+                </span>
+              )}
+              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#4ade80' : '#f87171' }}>
+                {fmtNum(netWorth, displayCurrency)}
+              </span>
+            </div>
+          </div>
+          {/* Income / Expense / Net Income */}
+          <div style={{ borderTop: '1px solid #374151', paddingTop: 8 }}>
+          {[
+            { label: 'Income',    value: income,  prev: prevIncome  },
+            { label: '− Expense', value: expense, prev: prevExpense, negate: true },
+          ].map(row => {
+            const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+            return (
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: '#9ca3af' }}>{row.label}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {diff != null && (
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#4ade80' : '#f87171' }}>
+                      {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
+                    </span>
+                  )}
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>
+                    {fmtNum(row.value, displayCurrency)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#d1d5db' }}>Net Income</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {prevNetIncome != null && (
@@ -1033,20 +1076,6 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
               </span>
             </div>
           </div>
-          {/* Net Worth = Cash + Securities - CC */}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff' }}>Net Worth</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {prevNetWorth != null && (
-                <span style={{ fontFamily: MONO, fontSize: 11, color: (netWorth - prevNetWorth) >= 0 ? '#4ade80' : '#f87171' }}>
-                  {(netWorth - prevNetWorth) >= 0 ? '+' : ''}{fmtNum(netWorth - prevNetWorth, displayCurrency)}
-                  {' '}({fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)})
-                </span>
-              )}
-              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#4ade80' : '#f87171' }}>
-                {fmtNum(netWorth, displayCurrency)}
-              </span>
-            </div>
           </div>
         </div>
 
@@ -1195,19 +1224,37 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             <RefreshCw size={14} style={loadingModels ? { animation: 'spin 1s linear infinite' } : {}} />
           </button>
         </div>
+        <div style={{ ...S.label, marginBottom: 8, marginTop: 14 }}>Vision Model (for PDF/Image scan)</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <select value={visionModel} onChange={e => { setVisionModel(e.target.value); saveUserSetting('vision_model', e.target.value); }}
+            style={{ ...S.select, flex: 1, fontSize: 12 }}>
+            {xaiModels.length === 0
+              ? <option value={visionModel}>{visionModel}</option>
+              : xaiModels.map(m => <option key={m} value={m}>{m}</option>)
+            }
+          </select>
+        </div>
         <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Used for AI chat and statement scanning. Tap refresh to load models from xAI.</div>
       </div>
 
       {/* Expense list setting */}
       <div style={S.card}>
-        <div style={{ ...S.label, marginBottom: 8 }}>Expense List Name</div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ ...S.label, marginBottom: 8 }}>Load Expenses Settings</div>
+        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>List Name</div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
           <input value={homeListName} onChange={e => setHomeListName(e.target.value)}
             placeholder="Home" style={{ ...S.input, flex: 1 }} />
           <button onClick={() => saveUserSetting('home_list_name', homeListName).then(() => showToast?.('Saved'))}
             style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
         </div>
-        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Name of the expense list to pull expenses from when using "Load Expenses" in Table view.</div>
+        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>Person (display name in expense list)</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input value={expensePerson} onChange={e => setExpensePerson(e.target.value)}
+            placeholder="e.g. Renee" style={{ ...S.input, flex: 1 }} />
+          <button onClick={() => saveUserSetting('expense_person', expensePerson).then(() => showToast?.('Saved'))}
+            style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
+        </div>
+        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Leave blank to use your own membership display name in that list.</div>
       </div>
 
       {/* Account mappings */}
