@@ -679,26 +679,30 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   /* ── TABLE VIEW ── */
   const TableView = (() => {
-    // Only show rates if historical rates were recorded for this date
     const histRates = selDate ? dateRates[selDate] : null;
-    const usedCurrencies = histRates ? [...new Set(
+    const isHistorical = !!histRates;
+    const activeRates = histRates || appToHKD();
+    const usedCurrencies = [...new Set(
       accounts
         .filter(a => bal(a.id, selDate) != null && a.currency !== displayCurrency && a.currency !== 'PTS')
         .map(a => a.currency)
-    )].sort() : [];
+    )].sort();
 
     return (
     <div style={{ padding: '0 16px' }}>
-      {/* Historical exchange rates for this snapshot */}
+      {/* Exchange rates for this snapshot */}
       {usedCurrencies.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-          <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Rates (hist.)</span>
+          <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>
+            Rates ({isHistorical ? 'hist.' : 'live'})
+          </span>
           {usedCurrencies.map(cur => {
-            const rate = cvtHKD(1, cur, displayCurrency, histRates);
+            const rate = cvtHKD(1, cur, displayCurrency, activeRates);
             return (
               <span key={cur} style={{
                 fontFamily: MONO, fontSize: 10, color: '#374151',
-                background: '#eff6ff', border: '1px solid #bfdbfe',
+                background: isHistorical ? '#eff6ff' : '#f3f4f6',
+                border: isHistorical ? '1px solid #bfdbfe' : 'none',
                 padding: '2px 8px', borderRadius: 6,
               }}>
                 1 {cur} = {displayCurrency} {rate.toFixed(2)}
