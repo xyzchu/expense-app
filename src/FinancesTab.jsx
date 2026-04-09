@@ -8,11 +8,13 @@ import {
 
 /* ─── constants ─────────────────────────────────────────────────── */
 const MONO = '"SF Mono","Fira Code","Cascadia Code","Consolas","Liberation Mono",monospace';
-const CATS = ['Cash', 'Securities', 'Credit Card', 'Income', 'Expense', 'Points/Miles', 'Others'];
+const CATS = ['Cash', 'Securities', 'Credit Card', 'Income', 'Expense', 'Points/Miles', 'Property', 'Others'];
 const CAT_COLOR = {
   Cash: '#3b82f6', Securities: '#8b5cf6', 'Credit Card': '#ef4444',
-  Income: '#22c55e', Expense: '#f97316', 'Points/Miles': '#06b6d4', Others: '#6b7280',
+  Income: '#22c55e', Expense: '#f97316', 'Points/Miles': '#06b6d4', Property: '#f59e0b', Others: '#6b7280',
 };
+// Categories excluded from net worth / summary totals / Grok context
+const CATS_EXCLUDED = new Set(['Others']);
 const ALL_CUR = ['HKD', 'AUD', 'USD', 'CNY', 'THB', 'EUR', 'SGD'];
 // Fallback HKD-based rates (1 unit of currency = X HKD)
 const FALLBACK_HKD = { HKD: 1, AUD: 4.95, USD: 7.78, CNY: 1.07, THB: 0.22, EUR: 8.55, SGD: 5.80 };
@@ -150,6 +152,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [loadingModels,   setLoadingModels]   = useState(false);
   const [confirmClearData,setConfirmClearData] = useState(false);
   const [showRatesFor,    setShowRatesFor]     = useState(false);
+  const [homeListName,    setHomeListName]     = useState('Home');
 
   // confirm delete
   const [confirmDeleteAcc,  setConfirmDeleteAcc]  = useState(null);
@@ -203,6 +206,8 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       if (c?.value) setDisplayCurrency(c.value);
       const m = settings.find(r => r.key === 'xai_model');
       if (m?.value) setXaiModel(m.value);
+      const hl = settings.find(r => r.key === 'home_list_name');
+      if (hl?.value) setHomeListName(hl.value);
     }
   }, [user, sb]);
 
@@ -236,6 +241,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   const catTotalOnDate = useCallback((cat, date) =>
     accounts.filter(a => a.category === cat).reduce((sum, a) => {
+      if (a.currency === 'PTS') return sum; // points not currency-converted
       const b = bal(a.id, date);
       return b != null ? sum + toDisplay(b, a.currency, date) : sum;
     }, 0),
@@ -368,26 +374,34 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         reader.onerror = rej;
         reader.readAsDataURL(file);
       });
+      // Use a vision-capable model for scan; fall back to current model if it includes "vision"
+      const visionModel = xaiModel.includes('vision') ? xaiModel : 'grok-2-vision-1212';
+      const mediaType = file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
       const resp = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: xaiModel,
+          model: visionModel,
           messages: [{
             role: 'user',
             content: [
-              { type: 'image_url', image_url: { url: `data:${file.type};base64,${base64}` } },
-              { type: 'text', text: 'Extract from this bank statement or screenshot: account number (last 4 digits only), statement date (YYYY-MM-DD), and account balance (numeric only). Return only valid JSON: {"account_number":"1234","date":"YYYY-MM-DD","balance":12345.67}' }
+              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'high' } },
+              { type: 'text', text: 'Extract from this bank statement or screenshot: account number (last 4 digits only), statement date (YYYY-MM-DD), and total account balance as a number. Return ONLY valid JSON with no markdown: {"account_number":"1234","date":"YYYY-MM-DD","balance":12345.67}' }
             ]
           }],
           temperature: 0,
         })
       });
       const json = await resp.json();
+      if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
       const raw = json.choices?.[0]?.message?.content || '';
       let parsed = {};
       try { parsed = JSON.parse(raw); }
-      catch { const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/); if (m) try { parsed = JSON.parse(m[1]); } catch { } }
+      catch {
+        const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
+        if (m) try { parsed = JSON.parse(m[1]); } catch { }
+      }
+      if (!parsed.balance && !parsed.date) throw new Error(`Could not parse response: ${raw.slice(0, 200)}`);
       const matched = accounts.find(a => a.account_number && parsed.account_number &&
         a.account_number.replace(/\D/g, '').endsWith(parsed.account_number.replace(/\D/g, '')));
       setPendingExtraction({
@@ -464,13 +478,19 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
       const listIds = [...new Set(memberships.map(m => m.list_id))];
       const { data: listData } = await sb.from('expense_lists')
-        .select('id, default_currency').in('id', listIds);
+        .select('id, name, default_currency').in('id', listIds);
+
+      // Filter to only the configured home list name
+      const homeLists = (listData || []).filter(l => l.name === homeListName);
+      if (!homeLists.length) { showToast?.(`List "${homeListName}" not found`); setLoadingExpenses(false); return; }
+      const homeListIds = new Set(homeLists.map(l => l.id));
       const listCur = {};
-      for (const l of listData || []) listCur[l.id] = l.default_currency || 'AUD';
+      for (const l of listData || []) listCur[l.id] = l.default_currency || 'HKD';
 
       const hkdRates = getRatesForDate(entryDate);
-      let totalHKD = 0;
-      for (const mem of memberships) {
+      let total = 0;
+      let listDefaultCur = homeLists[0].default_currency || 'HKD';
+      for (const mem of memberships.filter(m => homeListIds.has(m.list_id))) {
         const { data: exps } = await sb.from('expenses')
           .select('total_amount, shares, original_currency, split_type, list_id')
           .eq('list_id', mem.list_id).neq('split_type', 'settlement')
@@ -478,15 +498,16 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         for (const exp of exps || []) {
           const userShare = exp.shares?.[mem.display_name];
           if (userShare != null) {
-            const cur = exp.original_currency || listCur[exp.list_id] || 'AUD';
-            totalHKD += cvtHKD(userShare, cur, 'HKD', hkdRates);
+            const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
+            // Convert to list's default currency
+            total += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
           }
         }
       }
-      setExpenseSuggest({ totalHKD, fromDate: prevSnapDate, toDate: entryDate });
+      setExpenseSuggest({ total, currency: listDefaultCur, fromDate: prevSnapDate, toDate: entryDate });
     } catch (err) { console.error('Expense suggestion error:', err); }
     setLoadingExpenses(false);
-  }, [sb, user, entryDate, dates, getRatesForDate]);
+  }, [sb, user, entryDate, dates, getRatesForDate, homeListName]);
 
   /* ── add account ── */
   const addAccount = async () => {
@@ -546,30 +567,37 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const buildContext = () => {
     const recentDates = dates.slice(0, 24);
     let ctx = `Financial data. All HKD equivalents use the historical exchange rates recorded for each date.\n`;
+    ctx += `Note: "Others" and "Property" categories are excluded from net worth calculations.\n`;
     ctx += `Accounts: ${accounts.length}\n\n`;
     for (const date of recentDates) {
       const r = getRatesForDate(date);
-      // category totals in HKD
       const totals = {};
       for (const acc of accounts) {
+        if (CATS_EXCLUDED.has(acc.category)) continue;
         const b = bal(acc.id, date);
         if (b == null) continue;
+        if (acc.currency === 'PTS') continue; // points not converted to HKD
         const hkd = Math.round(cvtHKD(b, acc.currency, 'HKD', r));
         totals[acc.category] = (totals[acc.category] || 0) + hkd;
       }
       if (!Object.keys(totals).length) continue;
       ctx += `${date} (rates: ${Object.entries(r).filter(([c]) => c !== 'HKD').map(([c, v]) => `1 ${c}=HKD ${v}`).join(', ')}):\n`;
-      // per-account line: native + HKD
       for (const acc of accounts) {
+        if (CATS_EXCLUDED.has(acc.category)) continue;
         const b = bal(acc.id, date);
         if (b == null) continue;
-        const hkd = Math.round(cvtHKD(b, acc.currency, 'HKD', r));
-        ctx += `  ${acc.bank}/${acc.account_name} [${acc.category}]: ${acc.currency} ${b} = HKD ${hkd}\n`;
+        if (acc.currency === 'PTS') {
+          const miles = acc.metadata?.miles_ratio ? Math.round(b / acc.metadata.miles_ratio * 1000) : null;
+          ctx += `  ${acc.bank}/${acc.account_name} [${acc.category}]: ${b} pts${miles ? ` = ${miles} miles` : ''}\n`;
+        } else {
+          const hkd = Math.round(cvtHKD(b, acc.currency, 'HKD', r));
+          ctx += `  ${acc.bank}/${acc.account_name} [${acc.category}]: ${acc.currency} ${b} = HKD ${hkd}\n`;
+        }
       }
-      // category subtotals
       for (const [cat, total] of Object.entries(totals))
         ctx += `  SUBTOTAL ${cat}: HKD ${total}\n`;
-      ctx += '\n';
+      const netWorthHKD = (totals['Cash'] || 0) + (totals['Securities'] || 0) - (totals['Credit Card'] || 0);
+      ctx += `  NET WORTH: HKD ${netWorthHKD}\n\n`;
     }
     return ctx;
   };
@@ -757,7 +785,6 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       {[
         { id: 'table',   icon: Table2,       label: 'Table'   },
         { id: 'summary', icon: TrendingUp,   label: 'Summary' },
-        { id: 'entry',   icon: ClipboardList,label: 'Entry'   },
         { id: 'chat',    icon: MessageSquare,label: 'Chat'    },
         { id: 'settings',icon: Settings2,    label: 'Settings'},
       ].map(v => (
@@ -782,24 +809,60 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     const activeRates = histRates || appToHKD();
     const usedCurrencies = [...new Set(
       accounts
-        .filter(a => bal(a.id, selDate) != null && a.currency !== displayCurrency && a.currency !== 'PTS')
+        .filter(a => (entryValues[a.id] != null ? true : bal(a.id, selDate) != null) && a.currency !== displayCurrency && a.currency !== 'PTS')
         .map(a => a.currency)
     )].sort();
 
     return (
     <div style={{ padding: '0 16px' }}>
-      {/* Delete snapshot button */}
-      {selDate && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <button onClick={() => setConfirmDeleteSnap(true)}
-            style={{ ...S.btnGhost, padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#dc2626', borderColor: '#fecaca' }}>
-            <Trash2 size={12} /> Delete snapshot
+      {/* Date selector + helpers */}
+      <div style={{ ...S.card, padding: '12px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <div style={{ ...S.label, flexShrink: 0, fontSize: 10 }}>Date</div>
+          <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} style={{ ...S.input, flex: 1 }} />
+        </div>
+        {/* Live rates */}
+        {(() => {
+          const liveRates = appToHKD();
+          const entryCurrencies = [...new Set(accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency))].sort();
+          if (!entryCurrencies.length) return null;
+          return (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center' }}>
+              <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
+              {entryCurrencies.map(cur => (
+                <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 7px', borderRadius: 6 }}>
+                  1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
+                </span>
+              ))}
+            </div>
+          );
+        })()}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={copyFromLatest} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
+            <Copy size={12} /> Copy from latest
+          </button>
+          <button onClick={fetchExpenseSuggestion} disabled={loadingExpenses}
+            style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
+            {loadingExpenses ? <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={12} />}
+            Load Expenses
           </button>
         </div>
-      )}
-      {/* Exchange rates for this snapshot */}
-      {usedCurrencies.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
+        {expenseSuggest && (
+          <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Expenses from "{homeListName}"</div>
+            <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
+              {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
+            </div>
+            <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
+              {fmtNum(expenseSuggest.total, expenseSuggest.currency)}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Exchange rates for selected snapshot */}
+      {usedCurrencies.length > 0 && selDate && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
           <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>
             Rates ({isHistorical ? 'hist.' : 'live'})
           </span>
@@ -818,54 +881,50 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           })}
         </div>
       )}
+
+      {/* Account rows grouped by category */}
       {CATS.map(cat => {
         const catAccounts = accounts.filter(a => a.category === cat).sort((a, b) => a.bank.localeCompare(b.bank) || a.account_name.localeCompare(b.account_name));
         if (!catAccounts.length) return null;
-        const total = catTotalOnDate(cat, selDate);
+        const total = selDate ? catTotalOnDate(cat, selDate) : null;
         return (
-          <div key={cat} style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div key={cat} style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
               <span style={S.catBadge(cat)}>{cat}</span>
-              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: cat === 'Credit Card' ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
-                {fmtNum(total, displayCurrency)}
-              </span>
+              {total != null && cat !== 'Points/Miles' && (
+                <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: cat === 'Credit Card' ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
+                  {fmtNum(total, displayCurrency)}
+                </span>
+              )}
             </div>
             <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
               {catAccounts.map((acc, i) => {
-                const balance = bal(acc.id, selDate);
-                const miles = cat === 'Points/Miles' && balance != null && acc.metadata?.miles_ratio
-                  ? Math.round(balance / acc.metadata.miles_ratio * 1000) : null;
-                const isEditing = editingBalance?.accId === acc.id;
+                const savedBal = selDate ? bal(acc.id, selDate) : null;
+                const miles = cat === 'Points/Miles' && savedBal != null && acc.metadata?.miles_ratio
+                  ? Math.round(savedBal / acc.metadata.miles_ratio * 1000) : null;
                 return (
                   <div key={acc.id} style={{
-                    display: 'grid', gridTemplateColumns: '1fr auto auto',
+                    display: 'grid', gridTemplateColumns: '1fr auto 120px',
                     padding: '10px 14px', gap: 8, alignItems: 'center',
                     borderBottom: i < catAccounts.length - 1 ? '1px solid #f3f4f6' : 'none',
                   }}>
                     <div>
-                      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: '#111' }}>{acc.bank}</div>
-                      <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>
+                      <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: '#111' }}>
                         {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>
+                        {acc.bank}
                         {miles != null && <span style={{ color: '#06b6d4', marginLeft: 6 }}>≈ {miles.toLocaleString()} mi</span>}
                       </div>
                     </div>
-                    <span style={{ ...S.label, color: '#9ca3af', fontSize: 9 }}>{acc.currency}</span>
-                    {isEditing ? (
-                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <input autoFocus type="number" value={editingBalance.value}
-                          onChange={e => setEditingBalance(v => ({ ...v, value: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter') saveBalanceEdit(); if (e.key === 'Escape') setEditingBalance(null); }}
-                          style={{ ...S.inputSm, width: 90 }} />
-                        <button onClick={saveBalanceEdit} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a', padding: 2 }}><Check size={13} /></button>
-                        <button onClick={() => setEditingBalance(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 2 }}><X size={13} /></button>
-                      </div>
-                    ) : (
-                      <span onClick={() => setEditingBalance({ accId: acc.id, value: balance != null ? String(balance) : '' })}
-                        style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, textAlign: 'right', cursor: 'pointer',
-                          color: balance == null ? '#d1d5db' : cat === 'Credit Card' ? '#ef4444' : '#1a1a1a' }}>
-                        {balance != null ? fmtNum(balance, acc.currency) : '—'}
-                      </span>
-                    )}
+                    <span style={{ ...S.label, color: '#9ca3af', fontSize: 10 }}>{acc.currency === 'PTS' ? 'PTS' : acc.currency}</span>
+                    <input
+                      type="number"
+                      value={entryValues[acc.id] ?? ''}
+                      onChange={e => setEntryValues(prev => ({ ...prev, [acc.id]: e.target.value }))}
+                      placeholder={savedBal != null ? String(savedBal) : '—'}
+                      style={{ ...S.inputSm, color: entryValues[acc.id] != null && entryValues[acc.id] !== '' && entryValues[acc.id] !== String(savedBal) ? '#1a1a1a' : '#9ca3af' }}
+                    />
                   </div>
                 );
               })}
@@ -873,9 +932,27 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           </div>
         );
       })}
-      <button onClick={() => setShowAddAcc(true)} style={{ ...S.btnGhost, width: '100%', marginBottom: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+
+      {accounts.length > 0 && (
+        <button onClick={saveBulkEntry} disabled={savingEntry}
+          style={{ ...S.btnDark, width: '100%', padding: '14px', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4 }}>
+          {savingEntry ? <RefreshCw size={15} /> : <Check size={15} />}
+          {savingEntry ? 'Saving…' : `Save — ${fmtDate(entryDate)}`}
+        </button>
+      )}
+      <button onClick={() => setShowAddAcc(true)} style={{ ...S.btnGhost, width: '100%', marginTop: 10, marginBottom: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
         <Plus size={14} /> Add Account
       </button>
+
+      {/* Delete snapshot — bottom */}
+      {selDate && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: -60, marginBottom: 90 }}>
+          <button onClick={() => setConfirmDeleteSnap(true)}
+            style={{ ...S.btnGhost, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#9ca3af' }}>
+            <Trash2 size={12} /> Delete snapshot ({fmtDate(selDate)})
+          </button>
+        </div>
+      )}
     </div>
     );
   })();
@@ -899,6 +976,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     const cc      = catTotalOnDate('Credit Card', selDate);
     const income  = catTotalOnDate('Income',      selDate);
     const expense = catTotalOnDate('Expense',     selDate);
+    const prop    = catTotalOnDate('Property',    selDate);
     const netWorth  = cash + sec - cc;
     const netIncome = income - expense;
     const prevCash    = prevDate ? catTotalOnDate('Cash',        prevDate) : null;
@@ -906,12 +984,73 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     const prevCC      = prevDate ? catTotalOnDate('Credit Card', prevDate) : null;
     const prevIncome  = prevDate ? catTotalOnDate('Income',      prevDate) : null;
     const prevExpense = prevDate ? catTotalOnDate('Expense',     prevDate) : null;
+    const prevProp    = prevDate ? catTotalOnDate('Property',    prevDate) : null;
     const prevNetWorth  = prevDate ? (prevCash + prevSec - prevCC) : null;
     const prevNetIncome = prevDate ? (prevIncome - prevExpense) : null;
 
     return (
       <div style={{ padding: '0 16px 80px' }}>
-        {CATS.map(cat => {
+        {/* Dark summary card — at top */}
+        <div style={{ ...S.card, background: '#1a1a1a', color: '#fff', padding: '16px 18px' }}>
+          <div style={{ ...S.label, color: '#6b7280', marginBottom: 12 }}>Summary ({displayCurrency})</div>
+          {[
+            { label: 'Cash',          value: cash,    prev: prevCash    },
+            { label: 'Securities',    value: sec,     prev: prevSec     },
+            { label: '− Credit Card', value: cc,      prev: prevCC,     negate: true },
+            { divider: true },
+            { label: 'Income',        value: income,  prev: prevIncome  },
+            { label: '− Expense',     value: expense, prev: prevExpense, negate: true },
+          ].map((row, ri) => {
+            if (row.divider) return <div key={ri} style={{ borderTop: '1px solid #374151', margin: '6px 0' }} />;
+            const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+            return (
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: '#9ca3af' }}>{row.label}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {diff != null && (
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#4ade80' : '#f87171' }}>
+                      {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
+                    </span>
+                  )}
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>
+                    {fmtNum(row.value, displayCurrency)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          {/* Net Income */}
+          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#d1d5db' }}>Net Income</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {prevNetIncome != null && (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: (netIncome - prevNetIncome) >= 0 ? '#4ade80' : '#f87171' }}>
+                  {(netIncome - prevNetIncome) >= 0 ? '+' : ''}{fmtNum(netIncome - prevNetIncome, displayCurrency)}
+                </span>
+              )}
+              <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netIncome >= 0 ? '#4ade80' : '#f87171' }}>
+                {fmtNum(netIncome, displayCurrency)}
+              </span>
+            </div>
+          </div>
+          {/* Net Worth = Cash + Securities - CC */}
+          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff' }}>Net Worth</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {prevNetWorth != null && (
+                <span style={{ fontFamily: MONO, fontSize: 11, color: (netWorth - prevNetWorth) >= 0 ? '#4ade80' : '#f87171' }}>
+                  {(netWorth - prevNetWorth) >= 0 ? '+' : ''}{fmtNum(netWorth - prevNetWorth, displayCurrency)}
+                  {' '}({fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)})
+                </span>
+              )}
+              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#4ade80' : '#f87171' }}>
+                {fmtNum(netWorth, displayCurrency)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {CATS.filter(cat => cat !== 'Others').map(cat => {
           const byCur     = catByCurrency(cat, selDate);
           const prevByCur = prevDate ? catByCurrency(cat, prevDate) : {};
           const curCurs   = Object.keys(byCur);
@@ -987,170 +1126,10 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           );
         })}
 
-        {/* Dark summary card */}
-        <div style={{ ...S.card, background: '#1a1a1a', color: '#fff', padding: '16px 18px' }}>
-          <div style={{ ...S.label, color: '#6b7280', marginBottom: 12 }}>Summary ({displayCurrency})</div>
-          {[
-            { label: 'Cash',         value: cash,    prev: prevCash    },
-            { label: 'Securities',   value: sec,     prev: prevSec     },
-            { label: '− Credit Card',value: cc,      prev: prevCC,     negate: true },
-            { divider: true },
-            { label: 'Income',       value: income,  prev: prevIncome  },
-            { label: '− Expense',    value: expense, prev: prevExpense, negate: true },
-          ].map((row, ri) => {
-            if (row.divider) return <div key={ri} style={{ borderTop: '1px solid #374151', margin: '6px 0' }} />;
-            const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
-            return (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: '#9ca3af' }}>{row.label}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {diff != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#4ade80' : '#f87171' }}>
-                      {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
-                    </span>
-                  )}
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>
-                    {fmtNum(row.value, displayCurrency)}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Net Income */}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#d1d5db' }}>Net Income</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {prevNetIncome != null && (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: (netIncome - prevNetIncome) >= 0 ? '#4ade80' : '#f87171' }}>
-                  {(netIncome - prevNetIncome) >= 0 ? '+' : ''}{fmtNum(netIncome - prevNetIncome, displayCurrency)}
-                </span>
-              )}
-              <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netIncome >= 0 ? '#4ade80' : '#f87171' }}>
-                {fmtNum(netIncome, displayCurrency)}
-              </span>
-            </div>
-          </div>
-
-          {/* Net Worth */}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff' }}>Net Worth</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {prevNetWorth != null && (
-                <span style={{ fontFamily: MONO, fontSize: 11, color: (netWorth - prevNetWorth) >= 0 ? '#4ade80' : '#f87171' }}>
-                  {(netWorth - prevNetWorth) >= 0 ? '+' : ''}{fmtNum(netWorth - prevNetWorth, displayCurrency)}
-                  {' '}({fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)})
-                </span>
-              )}
-              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#4ade80' : '#f87171' }}>
-                {fmtNum(netWorth, displayCurrency)}
-              </span>
-            </div>
-          </div>
-        </div>
       </div>
     );
   })();
 
-  /* ── ENTRY VIEW ── */
-  const EntryView = (() => {
-    const banks = [...new Set(accounts.map(a => a.bank))].sort();
-    return (
-      <div style={{ padding: '0 16px 100px' }}>
-        {/* Date + helpers */}
-        <div style={{ ...S.card, padding: '14px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-            <div style={{ ...S.label, flexShrink: 0 }}>Snapshot Date</div>
-            <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} style={{ ...S.input, flex: 1 }} />
-          </div>
-          {/* Live rates that will be saved with this snapshot */}
-          {(() => {
-            const liveRates = appToHKD();
-            const entryCurrencies = [...new Set(
-              accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency)
-            )].sort();
-            if (!entryCurrencies.length) return null;
-            return (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
-                <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
-                {entryCurrencies.map(cur => (
-                  <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 8px', borderRadius: 6 }}>
-                    1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
-                  </span>
-                ))}
-              </div>
-            );
-          })()}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={copyFromLatest} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
-              <Copy size={12} /> Copy from latest
-            </button>
-            <button onClick={fetchExpenseSuggestion} disabled={loadingExpenses}
-              style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
-              {loadingExpenses ? <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={12} />}
-              Load Expenses
-            </button>
-          </div>
-          {expenseSuggest && (
-            <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
-              <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Home Tab Expenses</div>
-              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
-                {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
-              </div>
-              <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
-                {fmtNum(expenseSuggest.totalHKD, 'HKD')}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {accounts.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px 0', fontFamily: MONO, fontSize: 12, color: '#9ca3af' }}>
-            No accounts yet. Add accounts in Settings first.
-          </div>
-        ) : banks.map(bank => {
-          const bankAccs = accounts.filter(a => a.bank === bank).sort((a, b) => a.sort_order - b.sort_order);
-          return (
-            <div key={bank} style={{ marginBottom: 16 }}>
-              <div style={{ ...S.label, marginBottom: 6, paddingLeft: 2 }}>{bank}</div>
-              <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                {bankAccs.map((acc, i) => (
-                  <div key={acc.id} style={{
-                    display: 'grid', gridTemplateColumns: '1fr auto 120px',
-                    padding: '10px 14px', gap: 10, alignItems: 'center',
-                    borderBottom: i < bankAccs.length - 1 ? '1px solid #f3f4f6' : 'none',
-                  }}>
-                    <div>
-                      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: '#111' }}>
-                        {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
-                      </div>
-                      <span style={S.catBadge(acc.category)}>{acc.category}</span>
-                    </div>
-                    <span style={{ ...S.label, fontSize: 9, color: '#9ca3af' }}>{acc.currency}</span>
-                    <input
-                      type="number"
-                      value={entryValues[acc.id] ?? ''}
-                      onChange={e => setEntryValues(prev => ({ ...prev, [acc.id]: e.target.value }))}
-                      placeholder="—"
-                      style={S.inputSm}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-
-        {accounts.length > 0 && (
-          <button onClick={saveBulkEntry} disabled={savingEntry}
-            style={{ ...S.btnDark, width: '100%', padding: '14px', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            {savingEntry ? <RefreshCw size={15} /> : <Check size={15} />}
-            {savingEntry ? 'Saving…' : `Save All — ${fmtDate(entryDate)}`}
-          </button>
-        )}
-      </div>
-    );
-  })();
 
   /* ── CHAT VIEW ── */
   const ChatView = (
@@ -1217,6 +1196,18 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           </button>
         </div>
         <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Used for AI chat and statement scanning. Tap refresh to load models from xAI.</div>
+      </div>
+
+      {/* Expense list setting */}
+      <div style={S.card}>
+        <div style={{ ...S.label, marginBottom: 8 }}>Expense List Name</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input value={homeListName} onChange={e => setHomeListName(e.target.value)}
+            placeholder="Home" style={{ ...S.input, flex: 1 }} />
+          <button onClick={() => saveUserSetting('home_list_name', homeListName).then(() => showToast?.('Saved'))}
+            style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
+        </div>
+        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Name of the expense list to pull expenses from when using "Load Expenses" in Table view.</div>
       </div>
 
       {/* Account mappings */}
@@ -1561,7 +1552,6 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       <div style={{ overflowY: 'auto' }}>
         {view === 'table'   && TableView}
         {view === 'summary' && SummaryView}
-        {view === 'entry'   && EntryView}
         {view === 'chat'    && ChatView}
         {view === 'settings'&& SettingsView}
       </div>
