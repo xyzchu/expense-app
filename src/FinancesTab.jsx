@@ -678,8 +678,39 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   );
 
   /* ── TABLE VIEW ── */
-  const TableView = (
+  const TableView = (() => {
+    // Currencies used by accounts that have a balance on selDate, excluding displayCurrency
+    const usedCurrencies = [...new Set(
+      accounts
+        .filter(a => bal(a.id, selDate) != null && a.currency !== displayCurrency && a.currency !== 'PTS')
+        .map(a => a.currency)
+    )].sort();
+    const dateHKDRates = getRatesForDate(selDate);
+    const isHistorical = selDate && !!dateRates[selDate];
+
+    return (
     <div style={{ padding: '0 16px' }}>
+      {/* Exchange rates used */}
+      {usedCurrencies.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
+          <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>
+            Rates{isHistorical ? ' (hist.)' : ' (live)'}
+          </span>
+          {usedCurrencies.map(cur => {
+            const rate = cvtHKD(1, cur, displayCurrency, dateHKDRates);
+            return (
+              <span key={cur} style={{
+                fontFamily: MONO, fontSize: 10, color: '#374151',
+                background: isHistorical ? '#eff6ff' : '#f3f4f6',
+                border: isHistorical ? '1px solid #bfdbfe' : 'none',
+                padding: '2px 8px', borderRadius: 6,
+              }}>
+                1 {cur} = {fmtNum(rate, displayCurrency)}
+              </span>
+            );
+          })}
+        </div>
+      )}
       {CATS.map(cat => {
         const catAccounts = accounts.filter(a => a.category === cat).sort((a, b) => a.bank.localeCompare(b.bank) || a.account_name.localeCompare(b.account_name));
         if (!catAccounts.length) return null;
@@ -729,7 +760,8 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         <Plus size={14} /> Add Account
       </button>
     </div>
-  );
+    );
+  })();
 
   /* ── SUMMARY VIEW ── */
   const SummaryView = (() => {
