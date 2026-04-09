@@ -679,30 +679,26 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   /* ── TABLE VIEW ── */
   const TableView = (() => {
-    // Currencies used by accounts that have a balance on selDate, excluding displayCurrency
-    const usedCurrencies = [...new Set(
+    // Only show rates if historical rates were recorded for this date
+    const histRates = selDate ? dateRates[selDate] : null;
+    const usedCurrencies = histRates ? [...new Set(
       accounts
         .filter(a => bal(a.id, selDate) != null && a.currency !== displayCurrency && a.currency !== 'PTS')
         .map(a => a.currency)
-    )].sort();
-    const dateHKDRates = getRatesForDate(selDate);
-    const isHistorical = selDate && !!dateRates[selDate];
+    )].sort() : [];
 
     return (
     <div style={{ padding: '0 16px' }}>
-      {/* Exchange rates used */}
+      {/* Historical exchange rates for this snapshot */}
       {usedCurrencies.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-          <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>
-            Rates{isHistorical ? ' (hist.)' : ' (live)'}
-          </span>
+          <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Rates (hist.)</span>
           {usedCurrencies.map(cur => {
-            const rate = cvtHKD(1, cur, displayCurrency, dateHKDRates);
+            const rate = cvtHKD(1, cur, displayCurrency, histRates);
             return (
               <span key={cur} style={{
                 fontFamily: MONO, fontSize: 10, color: '#374151',
-                background: isHistorical ? '#eff6ff' : '#f3f4f6',
-                border: isHistorical ? '1px solid #bfdbfe' : 'none',
+                background: '#eff6ff', border: '1px solid #bfdbfe',
                 padding: '2px 8px', borderRadius: 6,
               }}>
                 1 {cur} = {displayCurrency} {rate.toFixed(2)}
@@ -946,6 +942,24 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             <div style={{ ...S.label, flexShrink: 0 }}>Snapshot Date</div>
             <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} style={{ ...S.input, flex: 1 }} />
           </div>
+          {/* Live rates that will be saved with this snapshot */}
+          {(() => {
+            const liveRates = appToHKD();
+            const entryCurrencies = [...new Set(
+              accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency)
+            )].sort();
+            if (!entryCurrencies.length) return null;
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
+                <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
+                {entryCurrencies.map(cur => (
+                  <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 8px', borderRadius: 6 }}>
+                    1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={copyFromLatest} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
               <Copy size={12} /> Copy from latest
