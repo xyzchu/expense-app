@@ -9,7 +9,7 @@ import {
   RefreshCw, Eye, EyeOff, TrendingUp
 } from 'lucide-react';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
+  XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
 import sb from './supabaseClient';
@@ -763,28 +763,37 @@ export default function SplitEase() {
     return {netBalances: nets, txns: simplifyDebts(nets), totals};
   }, [expenses, members]);
 
+  /* ── Visible Expenses (hide other people's personal entries) ── */
+  const visibleExpenses = useMemo(() => {
+    if (!myName) return expenses;
+    return expenses.filter(e => {
+      const sn = Object.keys(e.shares || {}).filter(n => (e.shares[n] || 0) > 0);
+      return !(sn.length === 1 && sn[0] !== myName);
+    });
+  }, [expenses, myName]);
+
   /* ── Filtered Expenses ── */
   const filtered = useMemo(() => {
-    if (!search.trim()) return expenses;
+    if (!search.trim()) return visibleExpenses;
     const q = search.toLowerCase();
-    return expenses.filter(e =>
+    return visibleExpenses.filter(e =>
       e.item?.toLowerCase().includes(q) || e.category?.toLowerCase().includes(q) ||
       e.date?.includes(q) || e.paid_by?.toLowerCase().includes(q) ||
       e.original_currency?.toLowerCase().includes(q)
     );
-  }, [expenses, search]);
+  }, [visibleExpenses, search]);
 
   /* ── Stats Data ── */
   const months = useMemo(() => {
-    const ms = new Set(expenses.map(e => e.date?.slice(0,7)).filter(Boolean));
+    const ms = new Set(visibleExpenses.map(e => e.date?.slice(0,7)).filter(Boolean));
     return [...ms].sort().reverse();
-  }, [expenses]);
+  }, [visibleExpenses]);
 
   useEffect(() => { if (months.length && !selMonth) setSelMonth(months[0]); }, [months]);
 
   const monthExpenses = useMemo(() =>
-    expenses.filter(e => e.date?.startsWith(selMonth) && e.split_type !== 'settlement'),
-  [expenses, selMonth]);
+    visibleExpenses.filter(e => e.date?.startsWith(selMonth) && e.split_type !== 'settlement'),
+  [visibleExpenses, selMonth]);
 
   const allCats = useMemo(() => {
     const merged = {...BASE_CATS};
@@ -1143,7 +1152,7 @@ export default function SplitEase() {
           const lastMonth = lm.toISOString().slice(0,7);
           const EXCL = new Set(['Income','Investment','Settlement']);
           const spend = {}; names.forEach(n => { spend[n] = {exp:0, prevExp:0}; });
-          expenses.filter(e => e.split_type !== 'settlement' && !EXCL.has(e.category)).forEach(e => {
+          visibleExpenses.filter(e => e.split_type !== 'settlement' && !EXCL.has(e.category)).forEach(e => {
             const m = e.date?.slice(0,7);
             Object.entries(e.shares||{}).forEach(([n,a]) => {
               if (!spend[n]) return;
@@ -1698,18 +1707,11 @@ export default function SplitEase() {
       }
     });
     // Add settlements for the info section
-    expenses.filter(e => e.date?.startsWith(selMonth) && e.split_type === 'settlement' && (!personFilter || e.shares?.[personFilter] > 0))
+    visibleExpenses.filter(e => e.date?.startsWith(selMonth) && e.split_type === 'settlement' && (!personFilter || e.shares?.[personFilter] > 0))
       .forEach(e => { infoCatTotals['Settlement'] = (infoCatTotals['Settlement']||0) + e.total_amount; });
     const catData = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
     const infoCatData = Object.entries(infoCatTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
 
-    const monthlyData = {};
-    expenses.filter(e => e.split_type !== 'settlement' && !STAT_EXCL.has(e.category)).forEach(e => {
-      const m = e.date?.slice(0,7); if (!m) return;
-      if (!monthlyData[m]) { monthlyData[m] = {}; names.forEach(n=>{monthlyData[m][n]=0;}); }
-      Object.entries(e.shares||{}).forEach(([n,a])=>{ monthlyData[m][n] = (monthlyData[m][n]||0) + a; });
-    });
-    const barData = Object.entries(monthlyData).sort((a,b)=>a[0].localeCompare(b[0])).map(([m,d])=>({month:m,...d}));
 
     return (
       <div style={{paddingBottom:80,padding:16}}>
@@ -1739,21 +1741,6 @@ export default function SplitEase() {
             );
           })}
         </div>
-
-        {/* Bar Chart */}
-        {barData.length > 0 && (
-          <div style={{...s.card,padding:16,marginTop:12}}>
-            <div style={{...s.label,marginBottom:12}}>Monthly by Person</div>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={barData}>
-                <XAxis dataKey="month" tick={{fontSize:10,fontFamily:MONO}} tickFormatter={v=>v.slice(5)}/>
-                <YAxis tick={{fontSize:10,fontFamily:MONO}} width={40}/>
-                <RTooltip formatter={(v,n)=>[fmt(v,defCur),n]} contentStyle={{fontFamily:MONO,fontSize:11}}/>
-                {names.map((n,i)=>(<Bar key={n} dataKey={n} fill={PERSON_COLORS[i%PERSON_COLORS.length]} opacity={personFilter&&personFilter!==n?0.2:1} radius={[3,3,0,0]}/>))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
 
         {/* Pie Chart */}
         {catData.length > 0 && (
