@@ -124,6 +124,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   const [expenseSuggest,   setExpenseSuggest]   = useState(null);
   const [loadingExpenses,  setLoadingExpenses]  = useState(false);
   const [homeMonthlyStats, setHomeMonthlyStats] = useState({}); // { [month]: { income, expense, currency } }
+  const [homeExpenses,     setHomeExpenses]     = useState([]); // all expenses from Home list for chat context
+  const [homeExpensesLoaded, setHomeExpensesLoaded] = useState(false);
 
   // extraction
   const [extracting,        setExtracting]        = useState(false);
@@ -688,6 +690,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     if (view === 'summary' && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
   }, [view, selSummaryMonth, loadHomeStatsForMonth]);
 
+  // Load Home list expenses when chat view opens
+  useEffect(() => {
+    if (view === 'chat') loadHomeExpenses();
+  }, [view, loadHomeExpenses]);
+
   /* ── add account ── */
   const addAccount = async () => {
     if (!newAcc.bank || !newAcc.account_name) return;
@@ -758,6 +765,26 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   };
 
   /* ── AI chat ── */
+  const loadHomeExpenses = useCallback(async () => {
+    if (!sb || !user || homeExpensesLoaded) return;
+    setHomeExpensesLoaded(true);
+    try {
+      const { data: memberships } = await sb.from('list_members').select('list_id, display_name').eq('user_id', user.id);
+      if (!memberships?.length) return;
+      const listIds = [...new Set(memberships.map(m => m.list_id))];
+      const { data: listData } = await sb.from('expense_lists').select('id, name, default_currency').in('id', listIds);
+      const homeLists = (listData || []).filter(l => l.name === homeListName);
+      if (!homeLists.length) return;
+      const homeListIds = homeLists.map(l => l.id);
+      const listDefaultCur = homeLists[0].default_currency || 'AUD';
+      const { data: exps } = await sb.from('expenses')
+        .select('item, category, date, total_amount, paid_by, shares, split_type, original_currency')
+        .in('list_id', homeListIds).neq('split_type', 'settlement')
+        .order('date', { ascending: false });
+      setHomeExpenses((exps || []).map(e => ({ ...e, listCurrency: listDefaultCur })));
+    } catch (err) { console.error('loadHomeExpenses error:', err); setHomeExpensesLoaded(false); }
+  }, [sb, user, homeListName, homeExpensesLoaded]);
+
   const buildContext = () => {
     const recentDates = dates.slice(0, 24);
     let ctx = `Financial data. All HKD equivalents use the historical exchange rates recorded for each date.\n`;
@@ -796,6 +823,28 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       if (totals['Property'] || totals['Loan']) ctx += `  NET PROPERTY (Property-Loan): HKD ${netPropertyHKD}\n`;
       ctx += '\n';
     }
+
+    // Home list expenses
+    if (homeExpenses.length) {
+      const cur = homeExpenses[0].listCurrency;
+      ctx += `\n--- HOME LIST EXPENSES (list currency: ${cur}) ---\n`;
+      // Group by month
+      const byMonth = {};
+      for (const e of homeExpenses) {
+        const m = e.date?.slice(0, 7);
+        if (!m) continue;
+        if (!byMonth[m]) byMonth[m] = { income: 0, expense: 0, items: [] };
+        const amount = e.total_amount;
+        if (e.category === 'Income') byMonth[m].income += amount;
+        else byMonth[m].expense += amount;
+        byMonth[m].items.push(`    ${e.date} [${e.category}] ${e.item}: ${cur} ${amount} (paid by ${e.paid_by})`);
+      }
+      for (const [m, data] of Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 24)) {
+        ctx += `\n${m}: Income=${cur} ${data.income.toFixed(2)}, Expense=${cur} ${data.expense.toFixed(2)}, Net=${cur} ${(data.income - data.expense).toFixed(2)}\n`;
+        ctx += data.items.join('\n') + '\n';
+      }
+    }
+
     return ctx;
   };
 
