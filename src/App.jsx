@@ -1141,35 +1141,24 @@ export default function SplitEase() {
           const thisMonth = new Date().toISOString().slice(0,7);
           const lm = new Date(); lm.setDate(1); lm.setMonth(lm.getMonth()-1);
           const lastMonth = lm.toISOString().slice(0,7);
-          const spend = {}; names.forEach(n => { spend[n] = {exp:0, inc:0, prevExp:0, prevInc:0}; });
-          expenses.filter(e => e.split_type !== 'settlement').forEach(e => {
+          const EXCL = new Set(['Income','Investment','Settlement']);
+          const spend = {}; names.forEach(n => { spend[n] = {exp:0, prevExp:0}; });
+          expenses.filter(e => e.split_type !== 'settlement' && !EXCL.has(e.category)).forEach(e => {
             const m = e.date?.slice(0,7);
-            const isIncome = e.category === 'Income';
             Object.entries(e.shares||{}).forEach(([n,a]) => {
               if (!spend[n]) return;
-              if (m === thisMonth) { if (isIncome) spend[n].inc += a; else spend[n].exp += a; }
-              else if (m === lastMonth) { if (isIncome) spend[n].prevInc += a; else spend[n].prevExp += a; }
+              if (m === thisMonth) spend[n].exp += a;
+              else if (m === lastMonth) spend[n].prevExp += a;
             });
           });
           return (
             <div style={{display:'grid',gridTemplateColumns:`repeat(${Math.min(names.length,2)}, 1fr)`,gap:8,marginTop:12}}>
               {names.map(n => (
                 <div key={n} style={{background:'#f3f4f6',borderRadius:12,padding:'10px 12px'}}>
-                  <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>{n}</div>
-                  <div style={{display:'flex',gap:10}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:9,...s.upper,color:'#dc2626',opacity:0.7,marginBottom:2}}>Expense</div>
-                      <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:'#1a1a1a'}}>{fmt(spend[n].exp, defCur)}</div>
-                      {spend[n].prevExp > 0 && <div style={{fontSize:9,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prevExp, defCur)} prev</div>}
-                    </div>
-                    {spend[n].inc > 0 || spend[n].prevInc > 0 ? (
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:9,...s.upper,color:'#16a34a',opacity:0.9,marginBottom:2}}>Income</div>
-                        <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:'#16a34a'}}>{fmt(spend[n].inc, defCur)}</div>
-                        {spend[n].prevInc > 0 && <div style={{fontSize:9,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prevInc, defCur)} prev</div>}
-                      </div>
-                    ) : null}
-                  </div>
+                  <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:4}}>{n}</div>
+                  <div style={{fontSize:14,fontWeight:700,...s.tabnum,color:'#1a1a1a'}}>{fmt(spend[n].exp, defCur)}</div>
+                  <div style={{fontSize:10,opacity:0.4,...s.upper,marginTop:2}}>this month</div>
+                  {spend[n].prevExp > 0 && <div style={{fontSize:10,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prevExp, defCur)} last month</div>}
                 </div>
               ))}
             </div>
@@ -1687,25 +1676,35 @@ export default function SplitEase() {
      STATS TAB
      ════════════════════════════════════════════════════════════ */
   const StatsTab = () => {
-    const personTotals = {}; const personIncome = {};
-    names.forEach(n => { personTotals[n] = 0; personIncome[n] = 0; });
+    const STAT_EXCL = new Set(['Income','Investment','Settlement']);
+    const personTotals = {};
+    names.forEach(n => { personTotals[n] = 0; });
     monthExpenses.forEach(e => {
-      const isIncome = e.category === 'Income';
+      if (STAT_EXCL.has(e.category)) return;
       Object.entries(e.shares||{}).forEach(([n,a]) => {
-        if (isIncome) { personIncome[n] = (personIncome[n]||0) + a; }
-        else { personTotals[n] = (personTotals[n]||0) + a; }
+        if (n in personTotals) personTotals[n] += a;
       });
     });
     const grandTotal = Object.values(personTotals).reduce((ss,v)=>ss+v, 0);
-    const grandIncome = Object.values(personIncome).reduce((ss,v)=>ss+v, 0);
 
     const visExps = personFilter ? monthExpenses.filter(e => e.shares?.[personFilter] > 0) : monthExpenses;
     const catTotals = {};
-    visExps.forEach(e => { catTotals[e.category] = (catTotals[e.category]||0) + e.total_amount; });
+    const infoCatTotals = {};
+    visExps.forEach(e => {
+      if (STAT_EXCL.has(e.category)) {
+        infoCatTotals[e.category] = (infoCatTotals[e.category]||0) + e.total_amount;
+      } else {
+        catTotals[e.category] = (catTotals[e.category]||0) + e.total_amount;
+      }
+    });
+    // Add settlements for the info section
+    expenses.filter(e => e.date?.startsWith(selMonth) && e.split_type === 'settlement' && (!personFilter || e.shares?.[personFilter] > 0))
+      .forEach(e => { infoCatTotals['Settlement'] = (infoCatTotals['Settlement']||0) + e.total_amount; });
     const catData = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
+    const infoCatData = Object.entries(infoCatTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
 
     const monthlyData = {};
-    expenses.filter(e => e.split_type !== 'settlement').forEach(e => {
+    expenses.filter(e => e.split_type !== 'settlement' && !STAT_EXCL.has(e.category)).forEach(e => {
       const m = e.date?.slice(0,7); if (!m) return;
       if (!monthlyData[m]) { monthlyData[m] = {}; names.forEach(n=>{monthlyData[m][n]=0;}); }
       Object.entries(e.shares||{}).forEach(([n,a])=>{ monthlyData[m][n] = (monthlyData[m][n]||0) + a; });
@@ -1726,16 +1725,7 @@ export default function SplitEase() {
           <button onClick={()=>setPersonFilter('')}
             style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(!personFilter?{background:'#222',color:'#f5f5ee'}:{})}}>
             <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>Together</div>
-            <div style={{display:'flex',gap:10}}>
-              <div>
-                <div style={{fontSize:9,...s.upper,color:!personFilter?'#fca5a5':'#dc2626',opacity:0.8,marginBottom:2}}>Exp</div>
-                <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(grandTotal,defCur)}</div>
-              </div>
-              {grandIncome > 0 && <div>
-                <div style={{fontSize:9,...s.upper,color:!personFilter?'#86efac':'#16a34a',opacity:0.9,marginBottom:2}}>Inc</div>
-                <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:!personFilter?'#86efac':'#16a34a'}}>{fmt(grandIncome,defCur)}</div>
-              </div>}
-            </div>
+            <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(grandTotal,defCur)}</div>
           </button>
           {names.map((n,i)=>{
             const active = personFilter===n;
@@ -1744,16 +1734,7 @@ export default function SplitEase() {
               <button key={n} onClick={()=>setPersonFilter(active?'':n)}
                 style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(active?{background:bg,color:'#fff'}:{})}}>
                 <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>{n}</div>
-                <div style={{display:'flex',gap:10}}>
-                  <div>
-                    <div style={{fontSize:9,...s.upper,color:active?'rgba(255,255,255,0.7)':'#dc2626',marginBottom:2}}>Exp</div>
-                    <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(personTotals[n]||0,defCur)}</div>
-                  </div>
-                  {(personIncome[n]||0) > 0 && <div>
-                    <div style={{fontSize:9,...s.upper,color:active?'rgba(255,255,255,0.7)':'#16a34a',marginBottom:2}}>Inc</div>
-                    <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:active?'#fff':'#16a34a'}}>{fmt(personIncome[n],defCur)}</div>
-                  </div>}
-                </div>
+                <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(personTotals[n]||0,defCur)}</div>
               </button>
             );
           })}
@@ -1834,6 +1815,20 @@ export default function SplitEase() {
                 </div>
               );
             })}
+            {infoCatData.length > 0 && (
+              <div style={{marginTop:12,paddingTop:10,borderTop:'1px dashed #e5e7eb'}}>
+                <div style={{fontSize:9,...s.upper,opacity:0.4,marginBottom:8,letterSpacing:'0.05em'}}>For information</div>
+                {infoCatData.map(({name,value}) => {
+                  const ci = getCat(name,customCats,members);
+                  return (
+                    <div key={name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',fontSize:11,...s.upper,opacity:0.6}}>
+                      <span style={{display:'flex',alignItems:'center',gap:5}}>{ci.emoji} {name}</span>
+                      <span style={{...s.tabnum,fontWeight:600}}>{fmt(value,defCur)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
