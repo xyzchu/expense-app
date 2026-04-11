@@ -1687,12 +1687,17 @@ export default function SplitEase() {
      STATS TAB
      ════════════════════════════════════════════════════════════ */
   const StatsTab = () => {
-    const personTotals = {};
-    names.forEach(n => { personTotals[n] = 0; });
+    const personTotals = {}; const personIncome = {};
+    names.forEach(n => { personTotals[n] = 0; personIncome[n] = 0; });
     monthExpenses.forEach(e => {
-      Object.entries(e.shares||{}).forEach(([n,a]) => { personTotals[n] = (personTotals[n]||0) + a; });
+      const isIncome = e.category === 'Income';
+      Object.entries(e.shares||{}).forEach(([n,a]) => {
+        if (isIncome) { personIncome[n] = (personIncome[n]||0) + a; }
+        else { personTotals[n] = (personTotals[n]||0) + a; }
+      });
     });
     const grandTotal = Object.values(personTotals).reduce((ss,v)=>ss+v, 0);
+    const grandIncome = Object.values(personIncome).reduce((ss,v)=>ss+v, 0);
 
     const visExps = personFilter ? monthExpenses.filter(e => e.shares?.[personFilter] > 0) : monthExpenses;
     const catTotals = {};
@@ -1719,17 +1724,39 @@ export default function SplitEase() {
         {/* Summary Cards */}
         <div className="se-noscroll" style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:4,marginTop:12}}>
           <button onClick={()=>setPersonFilter('')}
-            style={{...s.card,flexShrink:0,minWidth:100,padding:12,textAlign:'center',cursor:'pointer',border:'none',fontFamily:MONO,...(!personFilter?{background:'#222',color:'#f5f5ee'}:{})}}>
-            <div style={{fontSize:10,...s.upper,opacity:0.5}}>Together</div>
-            <div style={{fontSize:14,fontWeight:700,...s.tabnum,marginTop:4}}>{fmt(grandTotal,defCur)}</div>
+            style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(!personFilter?{background:'#222',color:'#f5f5ee'}:{})}}>
+            <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>Together</div>
+            <div style={{display:'flex',gap:10}}>
+              <div>
+                <div style={{fontSize:9,...s.upper,color:!personFilter?'#fca5a5':'#dc2626',opacity:0.8,marginBottom:2}}>Exp</div>
+                <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(grandTotal,defCur)}</div>
+              </div>
+              {grandIncome > 0 && <div>
+                <div style={{fontSize:9,...s.upper,color:!personFilter?'#86efac':'#16a34a',opacity:0.9,marginBottom:2}}>Inc</div>
+                <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:!personFilter?'#86efac':'#16a34a'}}>{fmt(grandIncome,defCur)}</div>
+              </div>}
+            </div>
           </button>
-          {names.map((n,i)=>(
-            <button key={n} onClick={()=>setPersonFilter(personFilter===n?'':n)}
-              style={{...s.card,flexShrink:0,minWidth:100,padding:12,textAlign:'center',cursor:'pointer',border:'none',fontFamily:MONO,...(personFilter===n?{background:PERSON_COLORS[i%PERSON_COLORS.length],color:'#fff'}:{})}}>
-              <div style={{fontSize:10,...s.upper,opacity:0.5}}>{n}</div>
-              <div style={{fontSize:14,fontWeight:700,...s.tabnum,marginTop:4}}>{fmt(personTotals[n]||0,defCur)}</div>
-            </button>
-          ))}
+          {names.map((n,i)=>{
+            const active = personFilter===n;
+            const bg = PERSON_COLORS[i%PERSON_COLORS.length];
+            return (
+              <button key={n} onClick={()=>setPersonFilter(active?'':n)}
+                style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(active?{background:bg,color:'#fff'}:{})}}>
+                <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>{n}</div>
+                <div style={{display:'flex',gap:10}}>
+                  <div>
+                    <div style={{fontSize:9,...s.upper,color:active?'rgba(255,255,255,0.7)':'#dc2626',marginBottom:2}}>Exp</div>
+                    <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(personTotals[n]||0,defCur)}</div>
+                  </div>
+                  {(personIncome[n]||0) > 0 && <div>
+                    <div style={{fontSize:9,...s.upper,color:active?'rgba(255,255,255,0.7)':'#16a34a',marginBottom:2}}>Inc</div>
+                    <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:active?'#fff':'#16a34a'}}>{fmt(personIncome[n],defCur)}</div>
+                  </div>}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {/* Bar Chart */}
