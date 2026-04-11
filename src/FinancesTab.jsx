@@ -638,9 +638,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   }, [sb, user, selDate, dates, snapshots, accounts, getRatesForDate, homeListName, expensePerson]);
 
   /* ── load Home list income/expense totals for a given month ── */
+  const loadedMonthsRef = useRef(new Set());
   const loadHomeStatsForMonth = useCallback(async (month) => {
     if (!sb || !user || !month) return;
-    if (homeMonthlyStats[month]) return; // already loaded
+    if (loadedMonthsRef.current.has(month)) return;
+    loadedMonthsRef.current.add(month);
     try {
       const { data: memberships } = await sb.from('list_members').select('list_id, display_name').eq('user_id', user.id);
       if (!memberships?.length) return;
@@ -656,24 +658,30 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       const targetName = expensePerson || myName || '';
       const hkdRates = getRatesForMonth(month);
 
+      const [y, mo] = month.split('-').map(Number);
+      const nextMonth = mo === 12 ? `${y + 1}-01-01` : `${y}-${String(mo + 1).padStart(2, '0')}-01`;
+
       const { data: exps } = await sb.from('expenses')
         .select('shares, original_currency, split_type, list_id, category')
         .in('list_id', [...homeListIds]).neq('split_type', 'settlement')
-        .gte('date', `${month}-01`).lt(`${month}-01`.replace(/^(\d{4})-(\d{2})/, (_, y, m) => { const nm = Number(m) + 1; return nm > 12 ? `${Number(y)+1}-01` : `${y}-${String(nm).padStart(2,'0')}`; }));
+        .gte('date', `${month}-01`).lt('date', nextMonth);
 
       let income = 0, expense = 0;
       for (const exp of exps || []) {
         const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
         const share = exp.shares?.[targetName];
         if (share != null) {
-          const inDisp = cvtHKD(share, cur, listDefaultCur, hkdRates);
-          if (exp.category === 'Income') income += inDisp;
-          else expense += inDisp;
+          const converted = cvtHKD(share, cur, listDefaultCur, hkdRates);
+          if (exp.category === 'Income') income += converted;
+          else expense += converted;
         }
       }
       setHomeMonthlyStats(prev => ({ ...prev, [month]: { income, expense, currency: listDefaultCur } }));
-    } catch (err) { console.error('loadHomeStatsForMonth error:', err); }
-  }, [sb, user, homeListName, expensePerson, getRatesForMonth, homeMonthlyStats]);
+    } catch (err) {
+      console.error('loadHomeStatsForMonth error:', err);
+      loadedMonthsRef.current.delete(month); // allow retry on error
+    }
+  }, [sb, user, homeListName, expensePerson, getRatesForMonth]);
 
   // Auto-load home stats when summary month changes
   useEffect(() => {
