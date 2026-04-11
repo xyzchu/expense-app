@@ -60,14 +60,16 @@ const BASE_CATS = {
   Utilities:{emoji:'💡',c:'#eab308',bg:'#fefce8',tx:'#a16207'},
   Travel:{emoji:'✈️',c:'#a855f7',bg:'#faf5ff',tx:'#7e22ce'},
   Home:{emoji:'🏠',c:'#ec4899',bg:'#fdf2f8',tx:'#be185d'},
-  Settlement:{emoji:'💸',c:'#10b981',bg:'#ecfdf5',tx:'#047857'},
+  Income:{emoji:'💰',c:'#10b981',bg:'#ecfdf5',tx:'#047857'},
+  Settlement:{emoji:'💸',c:'#64748b',bg:'#f1f5f9',tx:'#334155'},
   Other:{emoji:'📦',c:'#6b7280',bg:'#f3f4f6',tx:'#4b5563'},
 };
 const CAT_KW = {
+  Income:/\b(salary|wage|income|paycheck|payroll|dividend|interest|bonus|commission|freelance|refund|reimburs|rent|rental|revenue)\b/i,
   Restaurant:/\b(restaurant|dinner|lunch|breakfast|brunch|cafe|coffee|tea|eat|food|drink|bar|pub|pizza|burger|sushi|ramen|noodle|bbq|grill|takeaway|takeout|delivery|uber\s?eats|doordash|meal|snack|bubble\s?tea|boba|dessert|cake|ice\s?cream|mcdonald|kfc|subway)\b/i,
   Groceries:/\b(grocer|supermarket|woolworth|coles|aldi|costco|iga|market|fruit|vegetable|meat|chicken|pork|beef|fish|milk|bread|egg|rice|pasta|butter|cheese|grocery|shop)\b/i,
   Transport:/\b(uber|lyft|taxi|cab|bus|train|tram|metro|subway|fuel|gas|petrol|parking|toll|rego|car|vehicle|insurance|bike|scooter|opal|myki|transport)\b/i,
-  Utilities:/\b(electric|power|water|gas|internet|wifi|phone|mobile|bill|utility|subscription|spotify|netflix|disney|hulu|youtube|rent|lease)\b/i,
+  Utilities:/\b(electric|power|water|internet|wifi|phone|mobile|bill|utility|subscription|spotify|netflix|disney|hulu|youtube|rent|lease)\b/i,
   Travel:/\b(flight|hotel|hostel|airbnb|booking|travel|airport|luggage|visa|passport|tour|trip|holiday|vacation|accommodation|resort|cruise)\b/i,
   Home:/\b(furniture|ikea|bed|sofa|couch|chair|table|desk|lamp|curtain|rug|kitchen|bathroom|cleaning|laundry|repair|maintenance|garden|tool|hardware|bunnings)\b/i,
 };
@@ -121,7 +123,7 @@ const detectCategory = (text, overrides, customCats) => {
   const sw = sigWords(text);
   for (const w of sw) { if (overrides[w]) return overrides[w]; }
   for (const [cat, re] of Object.entries(CAT_KW)) { if (re.test(text)) return cat; }
-  return 'Other';
+  return 'Restaurant';
 };
 
 const getCat = (name, customCats, members) => {
@@ -300,6 +302,10 @@ export default function SplitEase() {
   const [editForm, setEditForm] = useState({});
   const [inputText, setInputText] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
+  const [previewCatOverride, setPreviewCatOverride] = useState(null);
+  const [recurringTemplates, setRecurringTemplates] = useState([]); // array of {text, category}
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   // ── Settings State ──
   const [catOverrides, setCatOverrides] = useState({});
@@ -310,6 +316,7 @@ export default function SplitEase() {
   // ── Stats State ──
   const [selMonth, setSelMonth] = useState('');
   const [personFilter, setPersonFilter] = useState('');
+  const [expandedStatCats, setExpandedStatCats] = useState(new Set());
 
   // ── Settings Tab State ──
   const [editName, setEditName] = useState('');
@@ -436,8 +443,10 @@ export default function SplitEase() {
     if (sets) {
       const ov = sets.find(s=>s.key==='categoryOverrides');
       const cc = sets.find(s=>s.key==='customCats');
+      const rt = sets.find(s=>s.key==='recurringTemplates');
       if (ov) setCatOverrides(ov.value || {});
       if (cc) setCustomCats(cc.value || {});
+      if (rt) setRecurringTemplates(rt.value || []);
     }
     const {data: wt} = await sb.from('webhook_tokens').select('secret').eq('list_id', list.id).eq('user_id', (await sb.auth.getUser()).data.user?.id).maybeSingle();
     setWebhookToken(wt?.secret || null);
@@ -597,18 +606,54 @@ export default function SplitEase() {
     setAddExactAmounts({}); setAddProportions({}); setAddPercentages({});
     setAddOrigCur(''); setAddOrigAmt(''); setShowForeign(false);
     showToast('Added: ' + data.item);
-    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} — ${fmt(data.total_amount, defCur)}`);
+    const shareNames1 = Object.keys(data.shares || {}).filter(n => (data.shares[n] || 0) > 0);
+    const isPersonal1 = shareNames1.length === 1 && shareNames1[0] === myName;
+    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} — ${fmt(data.total_amount, defCur)}`, 'expense', isPersonal1 ? user.id : null);
   };
 
   const addExpense = async () => {
     if (!parsedPreview || !currentList) return;
     const row = {...parsedPreview, list_id: currentList.id};
+    if (previewCatOverride) row.category = previewCatOverride;
     const {data, error} = await sb.from('expenses').insert(row).select().single();
     if (error) { showToast('Error: ' + error.message); return; }
     setExpenses(prev => [data, ...prev]);
-    setInputText(''); setInputFocused(false);
+    // Learn category override if user changed it or if it's Income (not auto-detected)
+    const finalCat = row.category;
+    const autoCat = parsedPreview.category;
+    if (previewCatOverride || finalCat === 'Income') {
+      const words = sigWords(inputText);
+      if (words.length) {
+        const newOv = {...catOverrides};
+        words.forEach(w => { newOv[w] = finalCat; });
+        setCatOverrides(newOv);
+        saveSetting('categoryOverrides', newOv);
+      }
+    }
+    setInputText(''); setInputFocused(false); setPreviewCatOverride(null); setShowSaveTemplate(false);
     showToast('Added: ' + data.item);
-    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} — ${fmt(data.total_amount, defCur)}`);
+    const shareNames2 = Object.keys(data.shares || {}).filter(n => (data.shares[n] || 0) > 0);
+    const isPersonal2 = shareNames2.length === 1 && shareNames2[0] === myName;
+    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} — ${fmt(data.total_amount, defCur)}`, 'expense', isPersonal2 ? user.id : null);
+  };
+
+  const saveTemplate = () => {
+    if (!inputText.trim()) return;
+    const finalCat = previewCatOverride || parsedPreview?.category || 'Restaurant';
+    const entry = { text: inputText.trim(), category: finalCat };
+    // dedupe by text
+    const next = [...recurringTemplates.filter(t => (t.text||t) !== entry.text), entry];
+    setRecurringTemplates(next);
+    saveSetting('recurringTemplates', next);
+    setShowSaveTemplate(false);
+    showToast('Template saved');
+  };
+
+  const deleteTemplate = (t) => {
+    const tText = t.text || t;
+    const next = recurringTemplates.filter(x => (x.text || x) !== tText);
+    setRecurringTemplates(next);
+    saveSetting('recurringTemplates', next);
   };
 
   /* ── Delete Expense ── */
@@ -694,7 +739,9 @@ export default function SplitEase() {
       setExpenses(prev => prev.map(e => e.id === editingId ? {...e,...upd} : e));
       showToast('Saved');
     }
-    sendNotification(`Expense updated in ${currentList.name}`, `${myName} updated ${upd.item} — ${fmt(upd.total_amount, defCur)}`);
+    const shareNames3 = Object.keys(upd.shares || {}).filter(n => (upd.shares[n] || 0) > 0);
+    const isPersonal3 = shareNames3.length === 1 && shareNames3[0] === myName;
+    sendNotification(`Expense updated in ${currentList.name}`, `${myName} updated ${upd.item} — ${fmt(upd.total_amount, defCur)}`, 'expense', isPersonal3 ? user.id : null);
     setEditingId(null);
   };
 
@@ -736,7 +783,7 @@ export default function SplitEase() {
   useEffect(() => { if (months.length && !selMonth) setSelMonth(months[0]); }, [months]);
 
   const monthExpenses = useMemo(() =>
-    expenses.filter(e => e.date?.startsWith(selMonth)),
+    expenses.filter(e => e.date?.startsWith(selMonth) && e.split_type !== 'settlement'),
   [expenses, selMonth]);
 
   const allCats = useMemo(() => {
@@ -1063,25 +1110,25 @@ export default function SplitEase() {
   const HomeTab = () => (
     <div style={{paddingBottom:80}}>
       {/* Balance Header */}
-      <div style={{background:'#222',color:'#f5f5ee',borderRadius:20,padding:20,margin:'16px 16px 0',boxShadow:'0 4px 20px rgba(0,0,0,0.15)'}}>
+      <div style={{background:'#fff',color:'#1a1a1a',borderRadius:20,padding:20,margin:'16px 16px 0',boxShadow:'0 1px 6px rgba(0,0,0,0.08)',border:'1.5px solid #f0f0ea'}}>
         <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
           <div>
             <div style={{fontSize:18,fontWeight:700,...s.upper}}>{currentList.name}</div>
-            <div style={{fontSize:10,...s.upper,opacity:0.5,marginTop:4}}>Logged in as {myName}</div>
+            <div style={{fontSize:10,...s.upper,opacity:0.4,marginTop:4}}>Logged in as {myName}</div>
           </div>
-          <span style={{fontSize:10,...s.upper,fontWeight:700,background:'rgba(255,255,255,0.12)',padding:'6px 10px',borderRadius:9999}}>{defCur}</span>
+          <span style={{fontSize:10,...s.upper,fontWeight:700,background:'#f3f4f6',color:'#374151',padding:'6px 10px',borderRadius:9999}}>{defCur}</span>
         </div>
 
         {txns.length === 0 ? (
-          <div style={{textAlign:'center',fontSize:12,...s.upper,opacity:0.6,padding:'10px 0'}}>All settled up! ✨</div>
+          <div style={{textAlign:'center',fontSize:12,...s.upper,opacity:0.4,padding:'10px 0'}}>All settled up! ✨</div>
         ) : (
           txns.map((t,i) => (
-            <div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(255,255,255,0.08)',borderRadius:12,padding:'10px 14px',marginBottom:6,fontSize:12,...s.upper}}>
-              <span>{t.from} owes {t.to}</span>
+            <div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:'#f8f9fa',borderRadius:12,padding:'10px 14px',marginBottom:6,fontSize:12,...s.upper}}>
+              <span style={{color:'#374151'}}>{t.from} owes {t.to}</span>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <span style={{fontWeight:700,...s.tabnum}}>{fmt(t.amount, defCur)}</span>
                 <button onClick={()=>{setShowSettle(!showSettle);setSettleFrom(t.from);setSettleTo(t.to);setSettleAmt(t.amount.toString());}}
-                  style={{fontFamily:MONO,fontSize:10,...s.upper,background:'rgba(255,255,255,0.2)',border:'none',color:'#f5f5ee',padding:'4px 10px',borderRadius:9999,cursor:'pointer'}}>
+                  style={{fontFamily:MONO,fontSize:10,...s.upper,background:'#1a1a1a',border:'none',color:'#fff',padding:'4px 10px',borderRadius:9999,cursor:'pointer'}}>
                   💸 Settle
                 </button>
               </div>
@@ -1095,7 +1142,7 @@ export default function SplitEase() {
           const lm = new Date(); lm.setDate(1); lm.setMonth(lm.getMonth()-1);
           const lastMonth = lm.toISOString().slice(0,7);
           const spend = {}; names.forEach(n => { spend[n] = {cur:0, prev:0}; });
-          expenses.forEach(e => {
+          expenses.filter(e => e.split_type !== 'settlement').forEach(e => {
             const m = e.date?.slice(0,7);
             Object.entries(e.shares||{}).forEach(([n,a]) => {
               if (!spend[n]) return;
@@ -1106,11 +1153,11 @@ export default function SplitEase() {
           return (
             <div style={{display:'grid',gridTemplateColumns:`repeat(${Math.min(names.length,2)}, 1fr)`,gap:8,marginTop:12}}>
               {names.map(n => (
-                <div key={n} style={{background:'rgba(255,255,255,0.08)',borderRadius:12,padding:'10px 12px'}}>
+                <div key={n} style={{background:'#f3f4f6',borderRadius:12,padding:'10px 12px'}}>
                   <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:4}}>{n}</div>
                   <div style={{fontSize:14,fontWeight:700,...s.tabnum}}>{fmt(spend[n].cur, defCur)}</div>
                   <div style={{fontSize:10,opacity:0.4,...s.upper,marginTop:2}}>this month</div>
-                  <div style={{fontSize:10,opacity:0.3,...s.tabnum,marginTop:1}}>{fmt(spend[n].prev, defCur)} last month</div>
+                  <div style={{fontSize:10,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prev, defCur)} last month</div>
                 </div>
               ))}
             </div>
@@ -1121,24 +1168,24 @@ export default function SplitEase() {
         <AnimatePresence>
           {showSettle && (
             <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} style={{overflow:'hidden'}}>
-              <div style={{background:'rgba(255,255,255,0.08)',borderRadius:12,padding:12,marginTop:10}}>
+              <div style={{background:'#f3f4f6',borderRadius:12,padding:12,marginTop:10}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
                   <select value={settleFrom} onChange={e=>setSettleFrom(e.target.value)}
-                    style={{flex:1,background:'rgba(255,255,255,0.15)',border:'none',color:'#f5f5ee',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.upper}}>
-                    {names.map(n=><option key={n} value={n} style={{color:'#1a1a1a'}}>{n}</option>)}
+                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.upper}}>
+                    {names.map(n=><option key={n} value={n}>{n}</option>)}
                   </select>
-                  <span style={{fontSize:10,...s.upper,opacity:0.5}}>paid</span>
+                  <span style={{fontSize:10,...s.upper,opacity:0.4}}>paid</span>
                   <select value={settleTo} onChange={e=>setSettleTo(e.target.value)}
-                    style={{flex:1,background:'rgba(255,255,255,0.15)',border:'none',color:'#f5f5ee',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.upper}}>
-                    {names.filter(n=>n!==settleFrom).map(n=><option key={n} value={n} style={{color:'#1a1a1a'}}>{n}</option>)}
+                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.upper}}>
+                    {names.filter(n=>n!==settleFrom).map(n=><option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
                 <div style={{display:'flex',gap:6}}>
                   <input type="number" placeholder="0.00" value={settleAmt} onChange={e=>setSettleAmt(e.target.value)}
                     onKeyDown={e=>{if(e.key==='Enter')addSettlement();}}
-                    style={{flex:1,background:'rgba(255,255,255,0.15)',border:'none',color:'#f5f5ee',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.tabnum}}/>
+                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.tabnum}}/>
                   <button onClick={addSettlement}
-                    style={{fontFamily:MONO,fontSize:11,...s.upper,fontWeight:700,background:'#f5f5ee',color:'#222',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
+                    style={{fontFamily:MONO,fontSize:11,...s.upper,fontWeight:700,background:'#1a1a1a',color:'#fff',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
                     Record
                   </button>
                 </div>
@@ -1146,7 +1193,7 @@ export default function SplitEase() {
                   <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:8}}>
                     {txns.map((t,i)=>(
                       <button key={i} onClick={()=>{setSettleFrom(t.from);setSettleTo(t.to);setSettleAmt(t.amount.toString());}}
-                        style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#f5f5ee',borderRadius:9999,padding:'4px 10px',fontSize:10,...s.upper,cursor:'pointer',fontFamily:MONO}}>
+                        style={{background:'#fff',border:'1px solid #e5e7eb',color:'#374151',borderRadius:9999,padding:'4px 10px',fontSize:10,...s.upper,cursor:'pointer',fontFamily:MONO}}>
                         {t.from} → {t.to}: {fmt(t.amount, defCur)}
                       </button>
                     ))}
@@ -1289,6 +1336,39 @@ export default function SplitEase() {
         )}
       </AnimatePresence>
 
+      {/* Recurring Templates */}
+      {recurringTemplates.length > 0 && (
+        <div style={{margin:'8px 16px 0',background:'#fff',borderRadius:12,border:'1px solid #f0f0ea',overflow:'hidden'}}>
+          <button onClick={()=>setShowTemplates(v=>!v)}
+            style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',background:'none',border:'none',cursor:'pointer',fontFamily:MONO}}>
+            <span style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.4}}>Recurring ({recurringTemplates.length})</span>
+            <span style={{fontSize:10,opacity:0.25}}>{showTemplates ? '▾' : '▸'}</span>
+          </button>
+          {showTemplates && (
+            <div style={{borderTop:'1px solid #f0f0ea',padding:'8px 10px',display:'flex',flexDirection:'column',gap:4}}>
+              {recurringTemplates.map(t => {
+                const tText = t.text || t;
+                const tCat = t.category || null;
+                const ci = tCat ? catInfo(tCat) : null;
+                return (
+                  <div key={tText} style={{display:'flex',alignItems:'center',gap:6,background:'#fafaf5',borderRadius:10,padding:'6px 10px'}}>
+                    <button onClick={()=>{setInputText(tText);setPreviewCatOverride(tCat);setInputFocused(true);inputRef.current?.focus();setShowTemplates(false);}}
+                      style={{flex:1,background:'none',border:'none',cursor:'pointer',textAlign:'left',fontFamily:MONO,fontSize:12,color:'#1a1a1a',padding:0}}>
+                      {ci && <span style={{...s.tag(ci.bg,ci.tx),marginRight:6}}>{ci.emoji} {tCat}</span>}
+                      {tText}
+                    </button>
+                    <button onClick={()=>deleteTemplate(t)}
+                      style={{background:'none',border:'none',cursor:'pointer',padding:'2px 4px',color:'#9ca3af',display:'flex',alignItems:'center',flexShrink:0}}>
+                      <X size={11}/>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Quick Input */}
       <div style={{...s.card,margin:'12px 16px 0',padding:0,overflow:'hidden'}}>
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'14px 16px'}}>
@@ -1297,37 +1377,55 @@ export default function SplitEase() {
             <Plus size={18}/>
           </button>
           <input ref={inputRef} placeholder="Add expense… e.g. 'dinner ¥500 Sam paid'" value={inputText}
-            onChange={e=>setInputText(e.target.value)} onFocus={()=>setInputFocused(true)}
+            onChange={e=>{setInputText(e.target.value);setPreviewCatOverride(null);}} onFocus={()=>setInputFocused(true)}
             onKeyDown={e=>{if(e.key==='Enter'&&parsedPreview)addExpense();}}
             style={{flex:1,fontSize:12,outline:'none',background:'transparent',border:'none',fontFamily:MONO,color:'#1a1a1a',letterSpacing:'0.04em'}}/>
-          {inputText && <button onClick={()=>{setInputText('');setInputFocused(false);}} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3}}><X size={16}/></button>}
+          {inputText && <button onClick={()=>{setInputText('');setInputFocused(false);setPreviewCatOverride(null);}} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3}}><X size={16}/></button>}
           {parsedPreview && <button onClick={addExpense} style={{background:'#222',color:'#f5f5ee',border:'none',width:32,height:32,borderRadius:12,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><Send size={14}/></button>}
         </div>
         <AnimatePresence>
           {inputFocused && parsedPreview && (
             <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} style={{overflow:'hidden'}}>
-              <div style={{borderTop:'1px solid #eee',padding:'12px 16px',fontSize:12}}>
-                <div style={{display:'flex',flexWrap:'wrap',gap:6,alignItems:'center'}}>
-                  <span style={{fontSize:14,fontWeight:700,...s.upper}}>{parsedPreview.item}</span>
-                  <span style={s.tag(catInfo(parsedPreview.category).bg, catInfo(parsedPreview.category).tx)}>
-                    {catInfo(parsedPreview.category).emoji} {parsedPreview.category}
-                  </span>
-                </div>
-                <div style={{fontSize:18,fontWeight:700,...s.tabnum,marginTop:4}}>{fmt(parsedPreview.total_amount, defCur)}</div>
-                {parsedPreview.original_currency && (
-                  <span style={{...s.tag('#fef3c7','#92400e'),marginTop:4}}>
-                    {CURR_FLAG[parsedPreview.original_currency]||''} {fmt(parsedPreview.original_amount, parsedPreview.original_currency)}
-                  </span>
-                )}
-                <div style={{opacity:0.35,marginTop:4,...s.upper}}>Paid by <strong>{parsedPreview.paid_by}</strong> • {parsedPreview.split_type}</div>
-                {Object.keys(parsedPreview.shares).length > 0 && (
-                  <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6}}>
-                    {Object.entries(parsedPreview.shares).map(([n,a])=>(
-                      <span key={n} style={{fontSize:10,...s.upper,background:'#F0F0EA',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
-                    ))}
+              {(() => {
+                const effectiveCat = previewCatOverride || parsedPreview.category;
+                const ci = catInfo(effectiveCat);
+                return (
+                  <div style={{borderTop:'1px solid #eee',padding:'12px 16px',fontSize:12}}>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:6,alignItems:'center'}}>
+                      <span style={{fontSize:14,fontWeight:700,...s.upper}}>{parsedPreview.item}</span>
+                      <select value={effectiveCat} onChange={e=>setPreviewCatOverride(e.target.value)}
+                        style={{fontSize:10,fontFamily:MONO,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',
+                          background:ci.bg,color:ci.tx,border:'none',borderRadius:9999,padding:'3px 8px',cursor:'pointer',outline:'none'}}>
+                        {allCatNames.map(c=>{const ci2=catInfo(c);return <option key={c} value={c}>{ci2.emoji} {c}</option>;})}
+                      </select>
+                    </div>
+                    <div style={{fontSize:18,fontWeight:700,...s.tabnum,marginTop:4}}>{fmt(parsedPreview.total_amount, defCur)}</div>
+                    {parsedPreview.original_currency && (
+                      <span style={{...s.tag('#fef3c7','#92400e'),marginTop:4}}>
+                        {CURR_FLAG[parsedPreview.original_currency]||''} {fmt(parsedPreview.original_amount, parsedPreview.original_currency)}
+                      </span>
+                    )}
+                    <div style={{opacity:0.35,marginTop:4,...s.upper}}>Paid by <strong>{parsedPreview.paid_by}</strong> • {parsedPreview.split_type}</div>
+                    {Object.keys(parsedPreview.shares).length > 0 && (
+                      <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6}}>
+                        {Object.entries(parsedPreview.shares).map(([n,a])=>(
+                          <span key={n} style={{fontSize:10,...s.upper,background:'#F0F0EA',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{marginTop:8}}>
+                      {!recurringTemplates.some(t => (t.text||t) === inputText.trim()) ? (
+                        <button onClick={saveTemplate}
+                          style={{fontSize:9,...s.upper,background:'none',border:'none',cursor:'pointer',color:'#9ca3af',padding:0,fontFamily:MONO}}>
+                          ＋ Save as recurring template
+                        </button>
+                      ) : (
+                        <span style={{fontSize:9,...s.upper,color:'#9ca3af',fontFamily:MONO}}>✓ Saved as template</span>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+                );
+              })()}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1590,7 +1688,7 @@ export default function SplitEase() {
     const catData = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
 
     const monthlyData = {};
-    expenses.forEach(e => {
+    expenses.filter(e => e.split_type !== 'settlement').forEach(e => {
       const m = e.date?.slice(0,7); if (!m) return;
       if (!monthlyData[m]) { monthlyData[m] = {}; names.forEach(n=>{monthlyData[m][n]=0;}); }
       Object.entries(e.shares||{}).forEach(([n,a])=>{ monthlyData[m][n] = (monthlyData[m][n]||0) + a; });
@@ -1661,15 +1759,39 @@ export default function SplitEase() {
             {catData.map(({name,value})=>{
               const ci = getCat(name,customCats,members);
               const pct = grandTotal > 0 ? (value/grandTotal*100) : 0;
+              const isExpanded = expandedStatCats.has(name);
+              const toggleCat = () => setExpandedStatCats(prev => {
+                const next = new Set(prev);
+                next.has(name) ? next.delete(name) : next.add(name);
+                return next;
+              });
+              const catExps = visExps.filter(e => e.category === name)
+                .sort((a,b) => b.total_amount - a.total_amount);
               return (
                 <div key={name} style={{marginBottom:10}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:12,...s.upper}}>
-                    <span>{ci.emoji} {name}</span>
+                  <button onClick={toggleCat} style={{width:'100%',background:'none',border:'none',padding:0,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:12,...s.upper}}>
+                    <span style={{display:'flex',alignItems:'center',gap:5}}>
+                      <ChevronDown size={12} style={{color:'#9ca3af',transform:isExpanded?'none':'rotate(-90deg)',transition:'transform 0.15s',flexShrink:0}}/>
+                      {ci.emoji} {name}
+                    </span>
                     <span style={{fontWeight:700,...s.tabnum}}>{fmt(value,defCur)} <span style={{fontSize:10,opacity:0.35}}>({pct.toFixed(0)}%)</span></span>
-                  </div>
+                  </button>
                   <div style={{height:6,background:'#F0F0EA',borderRadius:99,marginTop:4,overflow:'hidden'}}>
                     <div style={{height:'100%',borderRadius:99,width:`${pct}%`,background:ci.c,transition:'width 0.5s ease'}}/>
                   </div>
+                  {isExpanded && catExps.length > 0 && (
+                    <div style={{marginTop:6,paddingLeft:4,borderLeft:`2px solid ${ci.c}40`}}>
+                      {catExps.map((e,i) => (
+                        <div key={e.id||i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 6px',fontSize:11,...s.upper,borderRadius:6,marginBottom:1,background:i%2===0?'transparent':'#fafafa'}}>
+                          <div style={{flex:1,overflow:'hidden'}}>
+                            <span style={{color:'#374151',fontWeight:600}}>{e.item||'—'}</span>
+                            <span style={{opacity:0.4,marginLeft:6,fontSize:9}}>{e.date?.slice(5)}</span>
+                          </div>
+                          <span style={{fontWeight:700,...s.tabnum,color:ci.tx,flexShrink:0,marginLeft:8}}>{fmt(e.total_amount,defCur)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1967,7 +2089,7 @@ export default function SplitEase() {
       {tab === 'home' && HomeTab()}
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
-      {tab === 'finances' && <FinancesTab user={user} sb={sb} showToast={showToast} rates={rates} MONO={MONO} />}
+      {tab === 'finances' && <FinancesTab user={user} sb={sb} showToast={showToast} rates={rates} MONO={MONO} balanceTxns={txns} balanceCurrency={defCur} />}
 
       {/* Footer */}
       <div style={{

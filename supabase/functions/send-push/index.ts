@@ -197,17 +197,20 @@ serve(async (req) => {
   }
 
   try {
-    const { list_id, sender_user_id, title, body, tag } = await req.json();
+    const { list_id, sender_user_id, title, body, tag, target_user_id } = await req.json();
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { data: subs } = await supabase
+    let query = supabase
       .from('push_subscriptions')
       .select('subscription')
       .eq('list_id', list_id);
+    // If target_user_id is set, only notify that specific user
+    if (target_user_id) query = query.eq('user_id', target_user_id);
+    const { data: subs } = await query;
 
     if (!subs || subs.length === 0) {
       return new Response(JSON.stringify({ sent: 0 }), {

@@ -8,9 +8,9 @@ import {
 
 /* ─── constants ─────────────────────────────────────────────────── */
 const MONO = '"SF Mono","Fira Code","Cascadia Code","Consolas","Liberation Mono",monospace';
-const CATS = ['Cash', 'Securities', 'Credit Card', 'Income', 'Expense', 'Points/Miles', 'Property', 'Others'];
+const CATS = ['Cash', 'Securities', 'Credit Card', 'Loan', 'Income', 'Expense', 'Points/Miles', 'Property', 'Others'];
 const CAT_COLOR = {
-  Cash: '#3b82f6', Securities: '#8b5cf6', 'Credit Card': '#ef4444',
+  Cash: '#3b82f6', Securities: '#8b5cf6', 'Credit Card': '#ef4444', Loan: '#b91c1c',
   Income: '#22c55e', Expense: '#f97316', 'Points/Miles': '#06b6d4', Property: '#f59e0b', Others: '#6b7280',
 };
 // Categories excluded from net worth / summary totals / Grok context
@@ -99,7 +99,7 @@ const S = {
 /* ═══════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════════════════════════ */
-export default function FinancesTab({ user, sb, showToast, rates }) {
+export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, balanceCurrency }) {
 
   /* ── state ── */
   const [accounts,  setAccounts]  = useState([]);
@@ -116,10 +116,9 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [editingAccId,  setEditingAccId]  = useState(null);
   const [editingAccData,setEditingAccData]= useState({});
 
-  // bulk entry
-  const [entryDate,      setEntryDate]      = useState(new Date().toISOString().slice(0, 10));
-  const [entryValues,    setEntryValues]    = useState({});
-  const [savingEntry,    setSavingEntry]    = useState(false);
+  const TODAY = new Date().toISOString().slice(0, 10);
+  const [autoSaveStatus, setAutoSaveStatus] = useState({}); // { [accId]: 'saving' | 'saved' }
+  const autoSaveTimers = useRef({});
   const [expenseSuggest, setExpenseSuggest] = useState(null);
   const [loadingExpenses,setLoadingExpenses]= useState(false);
 
@@ -160,6 +159,12 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const [confirmDeleteAcc,  setConfirmDeleteAcc]  = useState(null);
   const [confirmDeleteSnap, setConfirmDeleteSnap] = useState(false);
 
+  // show/hide edit controls in table view
+  const [showEdits, setShowEdits] = useState(false);
+
+  // expanded categories in summary view
+  const [expandedCats, setExpandedCats] = useState(new Set());
+
   // inline balance editing
   const [editingBalance, setEditingBalance] = useState(null); // { accId, value }
 
@@ -170,17 +175,8 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     if (!selDate && unique.length) setSelDate(unique[0]);
   }, [snapshots]);
 
-  /* ── pre-fill entry values ── */
-  useEffect(() => {
-    if (!entryDate || !accounts.length) return;
-    const filled = {};
-    for (const acc of accounts) {
-      const b = snapshots.find(s => s.account_id === acc.id && s.snapshot_date === entryDate)?.balance;
-      if (b != null) filled[acc.id] = String(b);
-    }
-    setEntryValues(filled);
-    setExpenseSuggest(null);
-  }, [entryDate, accounts, snapshots]);
+  /* ── clear expense suggestion when date changes ── */
+  useEffect(() => { setExpenseSuggest(null); }, [selDate]);
 
   /* ── scroll chat ── */
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
@@ -243,7 +239,16 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   [displayCurrency, getRatesForDate]);
 
   /* ── data helpers ── */
-  const bal = (accId, date) => snapshots.find(s => s.account_id === accId && s.snapshot_date === date)?.balance;
+  const bal = (accId, date) => {
+    if (date === 'current') {
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 45);
+      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      const recent = snapshots.filter(s => s.account_id === accId && s.snapshot_date >= cutoffStr)
+        .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
+      return recent ? recent.balance : 0; // 0 if no snapshot in last 30 days
+    }
+    return snapshots.find(s => s.account_id === accId && s.snapshot_date === date)?.balance;
+  };
 
   const catTotalOnDate = useCallback((cat, date) =>
     accounts.filter(a => a.category === cat).reduce((sum, a) => {
@@ -262,7 +267,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     return byCur;
   };
 
-  const prevDate = dates[dates.indexOf(selDate) + 1] || null;
+  const prevDate = selDate === 'current' ? (dates[0] || null) : (dates[dates.indexOf(selDate) + 1] || null);
 
   /* ── import CSV (app's own export format) ── */
   const handleImportCsvFile = (e) => {
@@ -375,9 +380,9 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     setExtracting(true);
     try {
       const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      const prompt = 'Extract from this bank statement: account number (last 4 digits only), statement date (YYYY-MM-DD), and total account balance as a number. Return ONLY valid JSON with no markdown: {"account_number":"1234","date":"YYYY-MM-DD","balance":12345.67}';
+      const prompt = 'Extract ALL accounts from this bank statement. For each account return: account_number (last 4 digits), currency (3-letter code), balance (number, positive for assets, negative for liabilities), and type (e.g. "HKD Savings", "USD Savings", "Securities", "Credit Card"). Also return the statement_date. Credit card balances should be 0 if no amount owing. Return ONLY valid JSON with no markdown: {"date":"YYYY-MM-DD","accounts":[{"account_number":"1234","currency":"HKD","balance":12345.67,"type":"HKD Savings"}]}';
 
-      let requestBody;
+      let contentParts;
       if (isPDF) {
         // Step 1: upload PDF via Supabase edge function proxy (avoids CORS on xAI /v1/files)
         showToast?.('Uploading PDF…');
@@ -400,18 +405,11 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         const fileId = uploadJson.id;
         if (!fileId) throw new Error('No file_id returned from upload');
 
-        // Step 2: chat completion referencing the file_id
-        requestBody = {
-          model: visionModel,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'file', file: { file_id: fileId } },
-              { type: 'text', text: prompt },
-            ],
-          }],
-          temperature: 0,
-        };
+        // Step 2: reference file_id in /v1/responses request
+        contentParts = [
+          { type: 'input_text', text: prompt },
+          { type: 'input_file', file_id: fileId },
+        ];
       } else {
         // Images: base64 inline
         const base64 = await new Promise((res, rej) => {
@@ -421,102 +419,122 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           reader.readAsDataURL(file);
         });
         const mediaType = file.type || 'image/jpeg';
-        requestBody = {
-          model: visionModel,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'high' } },
-              { type: 'text', text: prompt },
-            ],
-          }],
-          temperature: 0,
-        };
+        contentParts = [
+          { type: 'input_image', image_url: `data:${mediaType};base64,${base64}` },
+          { type: 'input_text', text: prompt },
+        ];
       }
 
-      const resp = await fetch('https://api.x.ai/v1/chat/completions', {
+      const resp = await fetch('https://api.x.ai/v1/responses', {
         method: 'POST',
         headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          model: visionModel,
+          input: [{ role: 'user', content: contentParts }],
+        }),
       });
       const json = await resp.json();
       if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
-      const raw = json.choices?.[0]?.message?.content || '';
+      // output array may contain tool calls before the final message — find the message item
+      let raw = '';
+      for (const item of json.output || []) {
+        if (item.type === 'message' && Array.isArray(item.content)) {
+          const t = item.content.find(c => c.type === 'output_text');
+          if (t?.text) { raw = t.text; break; }
+        }
+      }
+      if (!raw) raw = json.choices?.[0]?.message?.content || '';
+      if (!raw) throw new Error('Empty response. API returned: ' + JSON.stringify(json).slice(0, 400));
       let parsed = {};
       try { parsed = JSON.parse(raw); }
       catch {
         const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
         if (m) try { parsed = JSON.parse(m[1]); } catch { }
       }
-      if (!parsed.balance && !parsed.date) throw new Error(`Could not parse response: ${raw.slice(0, 200)}`);
-      const matched = accounts.find(a => a.account_number && parsed.account_number &&
-        a.account_number.replace(/\D/g, '').endsWith(parsed.account_number.replace(/\D/g, '')));
-      setPendingExtraction({
-        matched_account_id: matched?.id || '',
-        detected_account_number: parsed.account_number || '',
-        detected_date: parsed.date || new Date().toISOString().slice(0, 10),
-        detected_balance: parsed.balance ?? '',
-        raw,
+      if (!parsed.date && !Array.isArray(parsed.accounts)) throw new Error('Grok said: ' + raw.slice(0, 300));
+      const items = (parsed.accounts || []).map(acc => {
+        const matched = accounts.find(a =>
+          a.currency === acc.currency &&
+          a.account_number && acc.account_number &&
+          a.account_number.replace(/\D/g, '').endsWith(acc.account_number.replace(/\D/g, ''))
+        ) || accounts.find(a =>
+          a.account_number && acc.account_number &&
+          a.account_number.replace(/\D/g, '').endsWith(acc.account_number.replace(/\D/g, ''))
+        );
+        return { ...acc, matched_account_id: matched?.id || '' };
       });
+      setPendingExtraction({ date: parsed.date || new Date().toISOString().slice(0, 10), items, raw });
     } catch (err) { showToast?.('Extraction failed: ' + err.message); }
     setExtracting(false);
   };
 
   const confirmExtraction = async () => {
-    const { matched_account_id, detected_date, detected_balance } = pendingExtraction;
-    if (!matched_account_id || !detected_date) { showToast?.('Select an account'); return; }
+    const { date, items } = pendingExtraction;
+    const toSave = items.filter(i => i.matched_account_id && i.balance != null && i.balance !== '');
+    if (!toSave.length) { showToast?.('Map at least one account'); return; }
     await sb.from('financial_snapshots').upsert(
-      { account_id: matched_account_id, user_id: user.id, snapshot_date: detected_date, balance: Number(detected_balance) },
+      toSave.map(i => ({ account_id: i.matched_account_id, user_id: user.id, snapshot_date: date, balance: Number(i.balance) })),
       { onConflict: 'account_id,snapshot_date' }
     );
-    // Save current live rates for this date (new entry)
     await sb.from('financial_date_rates').upsert(
-      { user_id: user.id, snapshot_date: detected_date, rates: appToHKD() },
+      { user_id: user.id, snapshot_date: date, rates: appToHKD() },
       { onConflict: 'user_id,snapshot_date' }
     );
     await loadAll();
     setPendingExtraction(null);
-    showToast?.('Saved');
+    showToast?.(`Saved ${toSave.length} account${toSave.length > 1 ? 's' : ''}`);
   };
 
-  /* ── bulk save ── */
-  const saveBulkEntry = async () => {
-    if (!entryDate) return;
-    setSavingEntry(true);
-    const rows = Object.entries(entryValues)
-      .filter(([, v]) => v !== '' && v !== undefined && !isNaN(parseFloat(v)))
-      .map(([accId, v]) => ({ account_id: accId, user_id: user?.id, snapshot_date: entryDate, balance: parseFloat(v) }));
-    if (rows.length && sb && user) {
-      await sb.from('financial_snapshots').upsert(rows, { onConflict: 'account_id,snapshot_date' });
-      // Save live rates for new entries (won't overwrite existing historical rates)
-      await sb.from('financial_date_rates').upsert(
-        { user_id: user.id, snapshot_date: entryDate, rates: appToHKD() },
-        { onConflict: 'user_id,snapshot_date' }
-      );
-      await loadAll();
-    }
-    setSavingEntry(false);
-    showToast?.(`Saved ${rows.length} entries for ${fmtDate(entryDate)}`);
-  };
+  /* ── auto-save single field on blur ── */
+  const autoSaveField = useCallback(async (accId, value, date) => {
+    if (!date || !sb || !user) return;
+    const num = parseFloat(value);
+    if (isNaN(num)) return;
+    setAutoSaveStatus(p => ({ ...p, [accId]: 'saving' }));
+    await sb.from('financial_snapshots').upsert(
+      { account_id: accId, user_id: user.id, snapshot_date: date, balance: num },
+      { onConflict: 'account_id,snapshot_date' }
+    );
+    await sb.from('financial_date_rates').upsert(
+      { user_id: user.id, snapshot_date: date, rates: appToHKD() },
+      { onConflict: 'user_id,snapshot_date' }
+    );
+    await loadAll();
+    setAutoSaveStatus(p => ({ ...p, [accId]: 'saved' }));
+    if (autoSaveTimers.current[accId]) clearTimeout(autoSaveTimers.current[accId]);
+    autoSaveTimers.current[accId] = setTimeout(() => setAutoSaveStatus(p => { const n = {...p}; delete n[accId]; return n; }), 2000);
+  }, [sb, user]);
 
-  /* ── copy from latest ── */
-  const copyFromLatest = () => {
-    const latestDate = dates.find(d => d < entryDate) || dates[0];
-    if (!latestDate) { showToast?.('No previous data to copy'); return; }
-    const filled = {};
+  /* ── copy from latest → save all to DB immediately ── */
+  const copyFromLatest = useCallback(async () => {
+    if (!selDate || !sb || !user) return;
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 45);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const rows = [];
     for (const acc of accounts) {
-      const b = snapshots.find(s => s.account_id === acc.id && s.snapshot_date === latestDate)?.balance;
-      if (b != null) filled[acc.id] = String(b);
+      const recent = snapshots
+        .filter(s => s.account_id === acc.id && s.snapshot_date >= cutoffStr)
+        .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
+      if (recent?.balance != null) rows.push({ account_id: acc.id, user_id: user.id, snapshot_date: selDate, balance: recent.balance });
     }
-    setEntryValues(filled);
-    showToast?.(`Copied from ${fmtDate(latestDate)}`);
-  };
+    if (!rows.length) { showToast?.('No data within last 45 days'); return; }
+    await sb.from('financial_snapshots').upsert(rows, { onConflict: 'account_id,snapshot_date' });
+    await sb.from('financial_date_rates').upsert(
+      { user_id: user.id, snapshot_date: selDate, rates: appToHKD() },
+      { onConflict: 'user_id,snapshot_date' }
+    );
+    await loadAll();
+    showToast?.(`Copied ${rows.length} accounts to ${fmtDate(selDate)}`);
+  }, [selDate, sb, user, accounts, snapshots]);
 
   /* ── expense suggestion from Home tab ── */
   const fetchExpenseSuggestion = useCallback(async () => {
-    if (!sb || !user || !entryDate) return;
-    const prevSnapDate = dates.find(d => d < entryDate);
-    if (!prevSnapDate) { showToast?.('No previous snapshot date found'); return; }
+    if (!sb || !user || !selDate || selDate === 'current') return;
+    const expenseAccIds = new Set(accounts.filter(a => a.category === 'Expense').map(a => a.id));
+    const prevSnapDate = dates.find(d => d < selDate &&
+      snapshots.some(s => expenseAccIds.has(s.account_id) && s.snapshot_date === d)
+    );
+    if (!prevSnapDate) { showToast?.('No previous snapshot with expense data found'); return; }
     setLoadingExpenses(true);
     try {
       const { data: memberships } = await sb.from('list_members')
@@ -534,30 +552,42 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       const listCur = {};
       for (const l of listData || []) listCur[l.id] = l.default_currency || 'HKD';
 
-      const hkdRates = getRatesForDate(entryDate);
+      const hkdRates = getRatesForDate(selDate);
       let total = 0;
       let listDefaultCur = homeLists[0].default_currency || 'HKD';
-      // Get all distinct display_names in these lists to populate the person dropdown later
-      const allNames = [...new Set(memberships.filter(m => homeListIds.has(m.list_id)).map(m => m.display_name))];
-      for (const mem of memberships.filter(m => homeListIds.has(m.list_id))) {
-        const { data: exps } = await sb.from('expenses')
-          .select('total_amount, shares, original_currency, split_type, list_id')
-          .eq('list_id', mem.list_id).neq('split_type', 'settlement')
-          .gte('date', prevSnapDate).lte('date', entryDate);
-        for (const exp of exps || []) {
-          // Use configured person name, or fall back to the membership's display_name
-          const targetName = expensePerson || mem.display_name;
+      const myName = memberships.find(m => homeListIds.has(m.list_id))?.display_name || '';
+      const targetName = expensePerson || myName || '';
+
+      const allListIds = [...homeListIds];
+      // Expense + Income totals: filtered by date range
+      const { data: rangeExps } = await sb.from('expenses')
+        .select('total_amount, shares, original_currency, split_type, list_id, paid_by, category')
+        .in('list_id', allListIds).neq('split_type', 'settlement')
+        .gte('date', prevSnapDate).lte('date', selDate);
+      let incomeTotal = 0;
+      for (const exp of rangeExps || []) {
+        if (targetName) {
+          const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
           const userShare = exp.shares?.[targetName];
           if (userShare != null) {
-            const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
-            total += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
+            if (exp.category === 'Income') {
+              incomeTotal += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
+            } else {
+              total += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
+            }
           }
         }
       }
-      setExpenseSuggest({ total, currency: listDefaultCur, fromDate: prevSnapDate, toDate: entryDate, person: expensePerson || allNames[0] || '' });
+
+      // Use balances already computed by home tab (same logic, always correct)
+      const balances = (balanceTxns || []).map(t => ({
+        from: t.from, to: t.to, amount: t.amount
+      }));
+
+      setExpenseSuggest({ total, incomeTotal, currency: listDefaultCur, fromDate: prevSnapDate, toDate: selDate, person: targetName, balances });
     } catch (err) { console.error('Expense suggestion error:', err); }
     setLoadingExpenses(false);
-  }, [sb, user, entryDate, dates, getRatesForDate, homeListName, expensePerson]);
+  }, [sb, user, selDate, dates, snapshots, accounts, getRatesForDate, homeListName, expensePerson]);
 
   /* ── add account ── */
   const addAccount = async () => {
@@ -577,6 +607,21 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     setEditingAccId(null); setEditingAccData({});
     await loadAll();
     showToast?.('Account updated');
+  };
+
+  /* ── reorder account within its bank group ── */
+  const reorderAcc = async (bank, accId, dir) => {
+    const bankAccs = [...accounts.filter(a => a.bank === bank)]
+      .sort((a, b) => a.sort_order - b.sort_order || a.account_name.localeCompare(b.account_name));
+    const idx = bankAccs.findIndex(a => a.id === accId);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= bankAccs.length) return;
+    // Swap positions in the array then renumber the whole group
+    [bankAccs[idx], bankAccs[swapIdx]] = [bankAccs[swapIdx], bankAccs[idx]];
+    for (let i = 0; i < bankAccs.length; i++) {
+      await sb.from('financial_accounts').update({ sort_order: i }).eq('id', bankAccs[i].id);
+    }
+    await loadAll();
   };
 
   /* ── delete account ── */
@@ -617,7 +662,7 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
   const buildContext = () => {
     const recentDates = dates.slice(0, 24);
     let ctx = `Financial data. All HKD equivalents use the historical exchange rates recorded for each date.\n`;
-    ctx += `Note: "Others" and "Property" categories are excluded from net worth calculations.\n`;
+    ctx += `Note: "Others" category is excluded from net worth. Property and Loan are separate (Net Property = Property - Loan).\n`;
     ctx += `Accounts: ${accounts.length}\n\n`;
     for (const date of recentDates) {
       const r = getRatesForDate(date);
@@ -647,7 +692,10 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
       for (const [cat, total] of Object.entries(totals))
         ctx += `  SUBTOTAL ${cat}: HKD ${total}\n`;
       const netWorthHKD = (totals['Cash'] || 0) + (totals['Securities'] || 0) - (totals['Credit Card'] || 0);
-      ctx += `  NET WORTH: HKD ${netWorthHKD}\n\n`;
+      const netPropertyHKD = (totals['Property'] || 0) - (totals['Loan'] || 0);
+      ctx += `  NET WORTH (Cash+Securities-CC): HKD ${netWorthHKD}\n`;
+      if (totals['Property'] || totals['Loan']) ctx += `  NET PROPERTY (Property-Loan): HKD ${netPropertyHKD}\n`;
+      ctx += '\n';
     }
     return ctx;
   };
@@ -808,16 +856,14 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         <button
           style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
           onClick={() => {
-            const today = new Date().toISOString().slice(0, 10);
-            setEntryDate(today);
-            setSelDate('');
-            setEntryValues({});
+            setSelDate(TODAY);
           }}>
           + New
         </button>
       )}
+      <button style={S.pill(selDate === 'current')} onClick={() => setSelDate('current')}>Current</button>
       {dates.map(d => (
-        <button key={d} style={S.pill(d === selDate)} onClick={() => { setSelDate(d); setEntryDate(d); }}>{fmtDate(d)}</button>
+        <button key={d} style={S.pill(d === selDate)} onClick={() => setSelDate(d)}>{fmtDate(d)}</button>
       ))}
     </div>
   );
@@ -866,24 +912,32 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
 
   /* ── TABLE VIEW ── */
   const TableView = (() => {
-    const histRates = selDate ? dateRates[selDate] : null;
-    const isHistorical = !!histRates;
+    const isCurrent = selDate === 'current';
+    const isToday = selDate === TODAY;
+    const histRates = (!isCurrent && !isToday && selDate) ? dateRates[selDate] : null;
+    const isHistorical = isCurrent || (!!selDate && !isToday);
     const activeRates = histRates || appToHKD();
     const usedCurrencies = [...new Set(
       accounts
-        .filter(a => (entryValues[a.id] != null ? true : bal(a.id, selDate) != null) && a.currency !== displayCurrency && a.currency !== 'PTS')
+        .filter(a => bal(a.id, selDate) != null && a.currency !== displayCurrency && a.currency !== 'PTS')
         .map(a => a.currency)
     )].sort();
 
     return (
     <div style={{ padding: '0 16px' }}>
-      {/* New snapshot controls — only shown when no historical date selected */}
-      {!selDate && (
+      {/* Edit mode toggle */}
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8 }}>
+        <button onClick={() => setShowEdits(v => !v)} style={{
+          ...S.btnGhost, padding: '5px 12px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4,
+          background: showEdits ? '#eff6ff' : undefined, borderColor: showEdits ? '#93c5fd' : undefined, color: showEdits ? '#1d4ed8' : undefined,
+        }}>
+          <Pencil size={11} /> {showEdits ? 'Hide edits' : 'Edit accounts'}
+        </button>
+      </div>
+
+      {/* Entry controls — only shown for today's date */}
+      {isToday && (
         <div style={{ ...S.card, padding: '12px 14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{ ...S.label, flexShrink: 0, fontSize: 10 }}>Date</div>
-            <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} style={{ ...S.input, flex: 1 }} />
-          </div>
           {/* Live rates */}
           {(() => {
             const liveRates = appToHKD();
@@ -912,13 +966,45 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           </div>
           {expenseSuggest && (
             <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
-              <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>Expenses from "{homeListName}"{expenseSuggest.person ? ` · ${expenseSuggest.person}` : ''}</div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>
+                "{homeListName}"{expenseSuggest.person ? ` · ${expenseSuggest.person}` : ''}
+              </div>
               <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
                 {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
               </div>
-              <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
-                {fmtNum(expenseSuggest.total, expenseSuggest.currency)}
+              <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
+                <div>
+                  <div style={{ fontFamily: MONO, fontSize: 9, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Expenses</div>
+                  <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#dc2626' }}>
+                    {fmtNum(expenseSuggest.total, expenseSuggest.currency)}
+                  </div>
+                </div>
+                {expenseSuggest.incomeTotal > 0 && (
+                  <div>
+                    <div style={{ fontFamily: MONO, fontSize: 9, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Income</div>
+                    <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#16a34a' }}>
+                      {fmtNum(expenseSuggest.incomeTotal, expenseSuggest.currency)}
+                    </div>
+                  </div>
+                )}
               </div>
+              {expenseSuggest.balances?.length > 0 && (
+                <div style={{ marginTop: 8, borderTop: '1px solid #fecaca', paddingTop: 8 }}>
+                  {expenseSuggest.balances.map((t, i) => {
+                    const iOwe = t.from === expenseSuggest.person;
+                    return (
+                      <div key={i} style={{ fontFamily: MONO, fontSize: 11, marginBottom: 3, display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: iOwe ? '#991b1b' : '#15803d' }}>
+                          {t.from} owes {t.to}
+                        </span>
+                        <span style={{ fontWeight: 700, color: iOwe ? '#dc2626' : '#16a34a' }}>
+                          {fmtNum(t.amount, balanceCurrency || expenseSuggest.currency)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -957,29 +1043,122 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
                 const savedBal = selDate ? bal(acc.id, selDate) : null;
                 const miles = acc.category === 'Points/Miles' && savedBal != null && acc.metadata?.miles_ratio
                   ? Math.round(savedBal / acc.metadata.miles_ratio * 1000) : null;
+                const latestSnap = snapshots.filter(s => s.account_id === acc.id).sort((a,b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
+                const displayDate = autoSaveStatus[acc.id] === 'saved' ? selDate : latestSnap?.snapshot_date;
+                const isEditing = editingAccId === acc.id;
                 return (
-                  <div key={acc.id} style={{
-                    display: 'grid', gridTemplateColumns: '1fr auto 120px',
-                    padding: '10px 14px', gap: 8, alignItems: 'center',
-                    borderBottom: i < bankAccs.length - 1 ? '1px solid #f3f4f6' : 'none',
-                  }}>
-                    <div>
-                      <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: '#111' }}>
-                        {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
+                  <div key={acc.id} style={{ borderBottom: i < bankAccs.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
+                    {/* Normal row */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: showEdits ? '44px 1fr auto auto 110px' : '1fr auto auto 110px',
+                      padding: '10px 14px', gap: 8, alignItems: 'center',
+                    }}>
+                      {/* Edit + reorder column (left-aligned, only when showEdits) */}
+                      {showEdits && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <button onClick={() => isEditing ? (setEditingAccId(null), setEditingAccData({})) : (setEditingAccId(acc.id), setEditingAccData({ ...acc }))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: isEditing ? '#3b82f6' : '#9ca3af' }}>
+                            <Pencil size={12} />
+                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                            <button onClick={() => reorderAcc(bank, acc.id, -1)} disabled={i === 0}
+                              style={{ background: 'none', border: 'none', cursor: i === 0 ? 'default' : 'pointer', padding: '1px 2px', color: i === 0 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
+                              ▲
+                            </button>
+                            <button onClick={() => reorderAcc(bank, acc.id, 1)} disabled={i === bankAccs.length - 1}
+                              style={{ background: 'none', border: 'none', cursor: i === bankAccs.length - 1 ? 'default' : 'pointer', padding: '1px 2px', color: i === bankAccs.length - 1 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
+                              ▼
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: '#111' }}>
+                          {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
+                        </div>
+                        <div style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={S.catBadge(acc.category)}>{acc.category}</span>
+                          {miles != null && <span style={{ color: '#06b6d4' }}>≈ {miles.toLocaleString()} mi</span>}
+                        </div>
                       </div>
-                      <div style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={S.catBadge(acc.category)}>{acc.category}</span>
-                        {miles != null && <span style={{ color: '#06b6d4' }}>≈ {miles.toLocaleString()} mi</span>}
+                      {/* Date + save indicator */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 36 }}>
+                        {displayDate && (
+                          <span style={{ fontFamily: MONO, fontSize: 9, color: autoSaveStatus[acc.id] === 'saved' ? '#16a34a' : '#9ca3af', whiteSpace: 'nowrap' }}>
+                            {fmtDate(displayDate)}
+                          </span>
+                        )}
+                        <AnimatePresence>
+                          {autoSaveStatus[acc.id] && (
+                            <motion.div key={autoSaveStatus[acc.id]} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                              style={{ color: autoSaveStatus[acc.id] === 'saving' ? '#9ca3af' : '#16a34a', display: 'flex', alignItems: 'center' }}>
+                              {autoSaveStatus[acc.id] === 'saving'
+                                ? <RefreshCw size={9} style={{ animation: 'spin 1s linear infinite' }} />
+                                : <Check size={9} />}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
+                      <span style={{ ...S.label, color: '#9ca3af', fontSize: 10 }}>{acc.currency === 'PTS' ? 'PTS' : acc.currency}</span>
+                      <input
+                        type="number"
+                        defaultValue={savedBal != null ? String(savedBal) : ''}
+                        key={`${acc.id}-${selDate}`}
+                        onBlur={e => { if (e.target.value !== '') autoSaveField(acc.id, e.target.value, selDate); }}
+                        placeholder={savedBal != null ? String(savedBal) : '—'}
+                        style={{ ...S.inputSm, color: savedBal != null ? '#1a1a1a' : '#9ca3af' }}
+                      />
                     </div>
-                    <span style={{ ...S.label, color: '#9ca3af', fontSize: 10 }}>{acc.currency === 'PTS' ? 'PTS' : acc.currency}</span>
-                    <input
-                      type="number"
-                      value={entryValues[acc.id] ?? ''}
-                      onChange={e => setEntryValues(prev => ({ ...prev, [acc.id]: e.target.value }))}
-                      placeholder={savedBal != null ? String(savedBal) : '—'}
-                      style={{ ...S.inputSm, color: entryValues[acc.id] != null && entryValues[acc.id] !== '' ? '#1a1a1a' : '#9ca3af' }}
-                    />
+                    {/* Inline edit form */}
+                    {isEditing && showEdits && (
+                      <div style={{ padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: '#f8fafc', borderTop: '1px solid #f3f4f6' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <div>
+                            <div style={{ ...S.label, marginBottom: 4 }}>Bank</div>
+                            <input value={editingAccData.bank || ''} onChange={e => setEditingAccData(d => ({ ...d, bank: e.target.value }))} style={S.input} />
+                          </div>
+                          <div>
+                            <div style={{ ...S.label, marginBottom: 4 }}>Account Name</div>
+                            <input value={editingAccData.account_name || ''} onChange={e => setEditingAccData(d => ({ ...d, account_name: e.target.value }))} style={S.input} />
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                          <div>
+                            <div style={{ ...S.label, marginBottom: 4 }}>Acct # (last 4)</div>
+                            <input value={editingAccData.account_number || ''} placeholder="1234"
+                              onChange={e => setEditingAccData(d => ({ ...d, account_number: e.target.value }))} style={S.input} />
+                          </div>
+                          <div>
+                            <div style={{ ...S.label, marginBottom: 4 }}>Currency</div>
+                            <select value={editingAccData.currency || 'HKD'} onChange={e => setEditingAccData(d => ({ ...d, currency: e.target.value }))} style={S.select}>
+                              {ALL_CUR.map(c => <option key={c}>{c}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ ...S.label, marginBottom: 4 }}>Category</div>
+                            <select value={editingAccData.category || 'Cash'} onChange={e => setEditingAccData(d => ({ ...d, category: e.target.value }))} style={S.select}>
+                              {CATS.map(c => <option key={c}>{c}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {editingAccData.category === 'Points/Miles' && (
+                          <div>
+                            <div style={{ ...S.label, marginBottom: 4 }}>Miles Ratio (pts per 1000 miles)</div>
+                            <input type="number" placeholder="48"
+                              value={editingAccData.metadata?.miles_ratio || ''}
+                              onChange={e => setEditingAccData(d => ({ ...d, metadata: { ...(d.metadata || {}), miles_ratio: parseFloat(e.target.value) || null } }))}
+                              style={S.input} />
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={updateAccount} style={{ ...S.btnDark, flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                            <Check size={13} /> Save
+                          </button>
+                          <button onClick={() => { setEditingAccId(null); setEditingAccData({}); }} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
+                          <button onClick={() => setConfirmDeleteAcc(acc)} style={{ ...S.btnRed, padding: '8px 12px' }}><Trash2 size={13} /></button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -988,19 +1167,12 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         );
       })}
 
-      {accounts.length > 0 && (
-        <button onClick={saveBulkEntry} disabled={savingEntry}
-          style={{ ...S.btnDark, width: '100%', padding: '14px', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4 }}>
-          {savingEntry ? <RefreshCw size={15} /> : <Check size={15} />}
-          {savingEntry ? 'Saving…' : `Save — ${fmtDate(entryDate)}`}
-        </button>
-      )}
       <button onClick={() => setShowAddAcc(true)} style={{ ...S.btnGhost, width: '100%', marginTop: 10, marginBottom: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
         <Plus size={14} /> Add Account
       </button>
 
       {/* Delete snapshot — bottom */}
-      {selDate && (
+      {selDate && selDate !== 'current' && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: -60, marginBottom: 90 }}>
           <button onClick={() => setConfirmDeleteSnap(true)}
             style={{ ...S.btnGhost, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#9ca3af' }}>
@@ -1029,41 +1201,45 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
     const cash    = catTotalOnDate('Cash',        selDate);
     const sec     = catTotalOnDate('Securities',  selDate);
     const cc      = catTotalOnDate('Credit Card', selDate);
+    const loan    = catTotalOnDate('Loan',        selDate);
     const income  = catTotalOnDate('Income',      selDate);
     const expense = catTotalOnDate('Expense',     selDate);
     const prop    = catTotalOnDate('Property',    selDate);
-    const netWorth  = cash + sec - cc;
-    const netIncome = income - expense;
+    const netWorth    = cash + sec - cc;
+    const netProperty = prop - loan;
+    const netIncome   = income - expense;
     const prevCash    = prevDate ? catTotalOnDate('Cash',        prevDate) : null;
     const prevSec     = prevDate ? catTotalOnDate('Securities',  prevDate) : null;
     const prevCC      = prevDate ? catTotalOnDate('Credit Card', prevDate) : null;
+    const prevLoan    = prevDate ? catTotalOnDate('Loan',        prevDate) : null;
     const prevIncome  = prevDate ? catTotalOnDate('Income',      prevDate) : null;
     const prevExpense = prevDate ? catTotalOnDate('Expense',     prevDate) : null;
     const prevProp    = prevDate ? catTotalOnDate('Property',    prevDate) : null;
-    const prevNetWorth  = prevDate ? (prevCash + prevSec - prevCC) : null;
-    const prevNetIncome = prevDate ? (prevIncome - prevExpense) : null;
+    const prevNetWorth    = prevDate ? (prevCash + prevSec - prevCC) : null;
+    const prevNetProperty = prevDate ? (prevProp - prevLoan) : null;
+    const prevNetIncome   = prevDate ? (prevIncome - prevExpense) : null;
 
     return (
       <div style={{ padding: '0 16px 80px' }}>
-        {/* Dark summary card — at top */}
-        <div style={{ ...S.card, background: '#1a1a1a', color: '#fff', padding: '16px 18px' }}>
-          <div style={{ ...S.label, color: '#6b7280', marginBottom: 12 }}>Summary ({displayCurrency})</div>
+        {/* Summary card */}
+        <div style={{ ...S.card, background: '#fff', padding: '16px 18px', border: '1.5px solid #f0f0f0' }}>
+          <div style={{ ...S.label, color: '#9ca3af', marginBottom: 12 }}>Summary ({displayCurrency})</div>
           {[
             { label: 'Cash',          value: cash,    prev: prevCash    },
             { label: 'Securities',    value: sec,     prev: prevSec     },
             { label: '− Credit Card', value: cc,      prev: prevCC,     negate: true },
-          ].map((row, ri) => {
+          ].map((row) => {
             const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
             return (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: '#9ca3af' }}>{row.label}</span>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {diff != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#4ade80' : '#f87171' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
                       {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
                     </span>
                   )}
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#1a1a1a' }}>
                     {fmtNum(row.value, displayCurrency)}
                   </span>
                 </div>
@@ -1071,22 +1247,61 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             );
           })}
           {/* Net Worth = Cash + Securities - CC */}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#fff' }}>Net Worth</span>
+          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>Net Worth</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               {prevNetWorth != null && (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: (netWorth - prevNetWorth) >= 0 ? '#4ade80' : '#f87171' }}>
+                <span style={{ fontFamily: MONO, fontSize: 10, color: (netWorth - prevNetWorth) >= 0 ? '#16a34a' : '#dc2626' }}>
                   {(netWorth - prevNetWorth) >= 0 ? '+' : ''}{fmtNum(netWorth - prevNetWorth, displayCurrency)}
                   {' '}({fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)})
                 </span>
               )}
-              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#4ade80' : '#f87171' }}>
+              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#16a34a' : '#dc2626' }}>
                 {fmtNum(netWorth, displayCurrency)}
               </span>
             </div>
           </div>
+          {/* Property / Loan / Net Property */}
+          {(prop > 0 || loan > 0) && (
+            <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginBottom: 10 }}>
+              {[
+                { label: 'Property', value: prop, prev: prevProp },
+                { label: '− Loan',   value: loan, prev: prevLoan, negate: true },
+              ].map((row) => {
+                const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+                return (
+                  <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {diff != null && (
+                        <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                          {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
+                        </span>
+                      )}
+                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#1a1a1a' }}>
+                        {fmtNum(row.value, displayCurrency)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Property</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {prevNetProperty != null && (
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: (netProperty - prevNetProperty) >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {(netProperty - prevNetProperty) >= 0 ? '+' : ''}{fmtNum(netProperty - prevNetProperty, displayCurrency)}
+                    </span>
+                  )}
+                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netProperty >= 0 ? '#16a34a' : '#dc2626' }}>
+                    {fmtNum(netProperty, displayCurrency)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Income / Expense / Net Income */}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8 }}>
+          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>
           {[
             { label: 'Income',    value: income,  prev: prevIncome  },
             { label: '− Expense', value: expense, prev: prevExpense, negate: true },
@@ -1094,29 +1309,29 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
             return (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: '#9ca3af' }}>{row.label}</span>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {diff != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#4ade80' : '#f87171' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
                       {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
                     </span>
                   )}
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#1a1a1a' }}>
                     {fmtNum(row.value, displayCurrency)}
                   </span>
                 </div>
               </div>
             );
           })}
-          <div style={{ borderTop: '1px solid #374151', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#d1d5db' }}>Net Income</span>
+          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {prevNetIncome != null && (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: (netIncome - prevNetIncome) >= 0 ? '#4ade80' : '#f87171' }}>
+                <span style={{ fontFamily: MONO, fontSize: 10, color: (netIncome - prevNetIncome) >= 0 ? '#16a34a' : '#dc2626' }}>
                   {(netIncome - prevNetIncome) >= 0 ? '+' : ''}{fmtNum(netIncome - prevNetIncome, displayCurrency)}
                 </span>
               )}
-              <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netIncome >= 0 ? '#4ade80' : '#f87171' }}>
+              <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netIncome >= 0 ? '#16a34a' : '#dc2626' }}>
                 {fmtNum(netIncome, displayCurrency)}
               </span>
             </div>
@@ -1124,76 +1339,119 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
           </div>
         </div>
 
-        {CATS.filter(cat => cat !== 'Others').map(cat => {
+        {CATS.map(cat => {
+          const isInfoOnly = cat === 'Others';
           const byCur     = catByCurrency(cat, selDate);
           const prevByCur = prevDate ? catByCurrency(cat, prevDate) : {};
           const curCurs   = Object.keys(byCur);
           if (!curCurs.length) return null;
           const totalDisp     = catTotalOnDate(cat, selDate);
           const prevTotalDisp = prevDate ? catTotalOnDate(cat, prevDate) : null;
+          const isExpanded = expandedCats.has(cat);
+          const toggleExpand = () => setExpandedCats(prev => {
+            const next = new Set(prev);
+            next.has(cat) ? next.delete(cat) : next.add(cat);
+            return next;
+          });
 
           return (
-            <div key={cat} style={{ ...S.card, padding: '14px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                <span style={S.catBadge(cat)}>{cat}</span>
+            <div key={cat} style={{ ...S.card, padding: '12px 16px' }}>
+              {/* Category header row — always visible, click to expand */}
+              <button onClick={toggleExpand} style={{
+                width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <ChevronDown size={13} style={{ color: '#9ca3af', transform: isExpanded ? 'none' : 'rotate(-90deg)', transition: 'transform 0.15s', flexShrink: 0 }} />
+                  <span style={S.catBadge(cat)}>{cat}</span>
+                  {isInfoOnly && <span style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af', letterSpacing: '0.05em' }}>info only</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {prevTotalDisp != null && (
+                    <span style={{ fontFamily: MONO, fontSize: 9, color: (totalDisp - prevTotalDisp) >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {(totalDisp - prevTotalDisp) >= 0 ? '+' : ''}{fmtNum(totalDisp - prevTotalDisp, displayCurrency)}
+                    </span>
+                  )}
                   <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700,
-                    color: (cat === 'Credit Card' || cat === 'Expense') ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
+                    color: (cat === 'Credit Card' || cat === 'Expense' || cat === 'Loan') ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
                     {fmtNum(totalDisp, displayCurrency)}
                   </span>
                   <Delta cur={totalDisp} prev={prevTotalDisp} />
                 </div>
-              </div>
+              </button>
 
-              {curCurs.map(cur => {
-                const native     = byCur[cur];
-                const prevNative = prevByCur[cur] ?? null;
-                const diff       = prevNative != null ? native - prevNative : null;
-                // Miles summary for Points/Miles
-                const milesAccs = cat === 'Points/Miles'
-                  ? accounts.filter(a => a.category === 'Points/Miles' && a.currency === cur && a.metadata?.miles_ratio)
-                  : [];
-                const totalMiles = milesAccs.reduce((s, a) => {
-                  const b = bal(a.id, selDate);
-                  return b != null ? s + (b / a.metadata.miles_ratio * 1000) : s;
-                }, 0);
+              {/* Expanded: currency groups + individual accounts */}
+              {isExpanded && (
+                <div style={{ marginTop: 10 }}>
+                  {curCurs.map(cur => {
+                    const native     = byCur[cur];
+                    const prevNative = prevByCur[cur] ?? null;
+                    const diff       = prevNative != null ? native - prevNative : null;
+                    const accsInCur  = accounts.filter(a => a.category === cat && a.currency === cur);
+                    const milesAccs  = cat === 'Points/Miles'
+                      ? accounts.filter(a => a.category === 'Points/Miles' && a.currency === cur && a.metadata?.miles_ratio)
+                      : [];
+                    const totalMiles = milesAccs.reduce((s, a) => {
+                      const b = bal(a.id, selDate);
+                      return b != null ? s + (b / a.metadata.miles_ratio * 1000) : s;
+                    }, 0);
 
-                return (
-                  <div key={cur} style={{ padding: '5px 0', borderTop: '1px solid #f3f4f6' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', minWidth: 32 }}>{cur}</span>
-                        {diff != null && (
-                          <span style={{ fontFamily: MONO, fontSize: 9, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
-                            {diff >= 0 ? '+' : ''}{fmtNum(diff, cur)}
-                          </span>
+                    return (
+                      <div key={cur} style={{ borderTop: '1px solid #f3f4f6', paddingTop: 6, marginTop: 4 }}>
+                        {/* Currency subtotal */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', minWidth: 32 }}>{cur}</span>
+                            {diff != null && (
+                              <span style={{ fontFamily: MONO, fontSize: 9, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                                {diff >= 0 ? '+' : ''}{fmtNum(diff, cur)}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>{fmtNum(native, cur)}</div>
+                            {cur !== displayCurrency && (
+                              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>= {fmtNum(toDisplay(native, cur, selDate === 'current' ? null : selDate), displayCurrency)}</div>
+                            )}
+                            {prevNative != null && (
+                              <div style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevNative, cur)}</div>
+                            )}
+                          </div>
+                        </div>
+                        {/* Individual accounts in this currency */}
+                        {accsInCur.map(acc => {
+                          const b = bal(acc.id, selDate);
+                          if (b == null) return null;
+                          const miles = acc.metadata?.miles_ratio ? Math.round(b / acc.metadata.miles_ratio * 1000) : null;
+                          return (
+                            <div key={acc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '2px 0 2px 8px', borderLeft: `2px solid ${(CAT_COLOR[cat] || '#9ca3af')}30` }}>
+                              <span style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>{acc.bank} · {acc.account_name}</span>
+                              <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: '#374151' }}>
+                                {fmtNum(b, cur)}{miles ? ` · ${miles.toLocaleString()}mi` : ''}
+                              </span>
+                            </div>
+                          );
+                        })}
+                        {totalMiles > 0 && (
+                          <div style={{ fontFamily: MONO, fontSize: 10, color: '#06b6d4', marginTop: 2, paddingLeft: 8 }}>
+                            ≈ {Math.round(totalMiles).toLocaleString()} miles total
+                          </div>
                         )}
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>{fmtNum(native, cur)}</div>
-                        {prevNative != null && (
-                          <div style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevNative, cur)}</div>
+                    );
+                  })}
+
+                  {(curCurs.length > 1 || curCurs[0] !== displayCurrency) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, marginTop: 4, borderTop: '1px dashed #e5e7eb' }}>
+                      <span style={{ ...S.label, fontSize: 9 }}>Total in {displayCurrency}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {prevTotalDisp != null && (
+                          <span style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevTotalDisp, displayCurrency)}</span>
                         )}
+                        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>{fmtNum(totalDisp, displayCurrency)}</span>
                       </div>
                     </div>
-                    {totalMiles > 0 && (
-                      <div style={{ fontFamily: MONO, fontSize: 10, color: '#06b6d4', marginTop: 2 }}>
-                        ≈ {Math.round(totalMiles).toLocaleString()} miles
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {(curCurs.length > 1 || curCurs[0] !== displayCurrency) && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, marginTop: 4, borderTop: '1px dashed #e5e7eb' }}>
-                  <span style={{ ...S.label, fontSize: 9 }}>Total in {displayCurrency}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {prevTotalDisp != null && (
-                      <span style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevTotalDisp, displayCurrency)}</span>
-                    )}
-                    <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>{fmtNum(totalDisp, displayCurrency)}</span>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1302,92 +1560,6 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Leave blank to use your own membership display name in that list.</div>
       </div>
 
-      {/* Account mappings */}
-      <div style={S.card}>
-        <div style={{ ...S.label, marginBottom: 6 }}>Account Mappings ({accounts.length})</div>
-        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginBottom: 12, textTransform: 'none', letterSpacing: 0 }}>
-          Set account number (for PDF/image matching), currency, category. For Points/Miles accounts, set miles ratio (e.g. 48 → balance ÷ 48 × 1000 = miles).
-        </div>
-
-        {[...accounts].sort((a, b) => a.bank.localeCompare(b.bank) || a.account_name.localeCompare(b.account_name)).map((acc, i, arr) => (
-          <div key={acc.id} style={{ borderBottom: i < arr.length - 1 ? '1px solid #f3f4f6' : 'none', paddingBottom: 10, marginBottom: 10 }}>
-            {editingAccId === acc.id ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <div>
-                    <div style={{ ...S.label, marginBottom: 4 }}>Bank</div>
-                    <input value={editingAccData.bank || ''} onChange={e => setEditingAccData(d => ({ ...d, bank: e.target.value }))} style={S.input} />
-                  </div>
-                  <div>
-                    <div style={{ ...S.label, marginBottom: 4 }}>Account Name</div>
-                    <input value={editingAccData.account_name || ''} onChange={e => setEditingAccData(d => ({ ...d, account_name: e.target.value }))} style={S.input} />
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                  <div>
-                    <div style={{ ...S.label, marginBottom: 4 }}>Acct # (last 4)</div>
-                    <input value={editingAccData.account_number || ''} placeholder="1234"
-                      onChange={e => setEditingAccData(d => ({ ...d, account_number: e.target.value }))} style={S.input} />
-                  </div>
-                  <div>
-                    <div style={{ ...S.label, marginBottom: 4 }}>Currency</div>
-                    <select value={editingAccData.currency || 'HKD'} onChange={e => setEditingAccData(d => ({ ...d, currency: e.target.value }))} style={S.select}>
-                      {ALL_CUR.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <div style={{ ...S.label, marginBottom: 4 }}>Category</div>
-                    <select value={editingAccData.category || 'Cash'} onChange={e => setEditingAccData(d => ({ ...d, category: e.target.value }))} style={S.select}>
-                      {CATS.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </div>
-                </div>
-                {editingAccData.category === 'Points/Miles' && (
-                  <div>
-                    <div style={{ ...S.label, marginBottom: 4 }}>Miles Ratio (pts per 1000 miles)</div>
-                    <input type="number" placeholder="48"
-                      value={editingAccData.metadata?.miles_ratio || ''}
-                      onChange={e => setEditingAccData(d => ({ ...d, metadata: { ...(d.metadata || {}), miles_ratio: parseFloat(e.target.value) || null } }))}
-                      style={S.input} />
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={updateAccount} style={{ ...S.btnDark, flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                    <Check size={13} /> Save
-                  </button>
-                  <button onClick={() => { setEditingAccId(null); setEditingAccData({}); }} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
-                  <button onClick={() => setConfirmDeleteAcc(acc)} style={{ ...S.btnRed, padding: '8px 12px' }}><Trash2 size={13} /></button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>
-                    {acc.bank} / {acc.account_name}
-                    {acc.account_number && <span style={{ fontFamily: MONO, fontSize: 10, color: '#9ca3af', marginLeft: 6 }}>···{acc.account_number}</span>}
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                    <span style={S.catBadge(acc.category)}>{acc.category}</span>
-                    <span style={{ ...S.catBadge('Others'), background: '#f3f4f6', color: '#6b7280' }}>{acc.currency}</span>
-                    {acc.metadata?.miles_ratio && (
-                      <span style={{ fontFamily: MONO, fontSize: 9, color: '#06b6d4', alignSelf: 'center' }}>÷{acc.metadata.miles_ratio}×1000 mi</span>
-                    )}
-                  </div>
-                </div>
-                <button onClick={() => { setEditingAccId(acc.id); setEditingAccData({ ...acc }); }}
-                  style={{ ...S.btnGhost, padding: '6px 10px' }}>
-                  <Pencil size={13} />
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-
-        <button onClick={() => setShowAddAcc(true)} style={{ ...S.btnGhost, width: '100%', marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <Plus size={14} /> Add Account
-        </button>
-      </div>
-
       {/* Data management */}
       <div style={S.card}>
         <div style={{ ...S.label, marginBottom: 12 }}>Data Management</div>
@@ -1422,39 +1594,41 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 480 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Statement Extraction Review</div>
               <button onClick={() => setPendingExtraction(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
             </div>
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ ...S.label, marginBottom: 6 }}>Account</div>
-              <select value={pendingExtraction.matched_account_id}
-                onChange={e => setPendingExtraction(p => ({ ...p, matched_account_id: e.target.value }))}
-                style={S.select}>
-                <option value="">— Select account —</option>
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.bank} / {a.account_name}{a.account_number ? ` ···${a.account_number}` : ''}</option>
-                ))}
-              </select>
-              {pendingExtraction.detected_account_number && (
-                <div style={{ fontFamily: MONO, fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
-                  Detected account: ···{pendingExtraction.detected_account_number}
+            {/* Date */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ ...S.label, marginBottom: 6 }}>Statement Date</div>
+              <input type="date" value={pendingExtraction.date}
+                onChange={e => setPendingExtraction(p => ({ ...p, date: e.target.value }))} style={{ ...S.input, maxWidth: 180 }} />
+            </div>
+            {/* Per-account rows */}
+            <div style={{ ...S.label, marginBottom: 8 }}>
+              Extracted accounts — map each to your account (unmapped rows are skipped)
+            </div>
+            {pendingExtraction.items.map((item, idx) => (
+              <div key={idx} style={{ background: item.matched_account_id ? '#f0fdf4' : '#fafafa', border: `1px solid ${item.matched_account_id ? '#bbf7d0' : '#e5e7eb'}`, borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280', minWidth: 80 }}>{item.type}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600 }}>{item.currency} {Number(item.balance).toLocaleString()}</span>
+                  {item.account_number && <span style={{ fontFamily: MONO, fontSize: 10, color: '#9ca3af' }}>···{item.account_number}</span>}
                 </div>
-              )}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-              <div>
-                <div style={{ ...S.label, marginBottom: 6 }}>Date</div>
-                <input type="date" value={pendingExtraction.detected_date}
-                  onChange={e => setPendingExtraction(p => ({ ...p, detected_date: e.target.value }))} style={S.input} />
+                <select value={item.matched_account_id}
+                  onChange={e => setPendingExtraction(p => ({ ...p, items: p.items.map((it, i) => i === idx ? { ...it, matched_account_id: e.target.value } : it) }))}
+                  style={{ ...S.select, fontSize: 12 }}>
+                  <option value="">— Skip this account —</option>
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.bank} / {a.account_name} ({a.currency}){a.account_number ? ` ···${a.account_number}` : ''}</option>
+                  ))}
+                </select>
+                <input type="number" value={item.balance}
+                  onChange={e => setPendingExtraction(p => ({ ...p, items: p.items.map((it, i) => i === idx ? { ...it, balance: e.target.value } : it) }))}
+                  style={{ ...S.inputSm, marginTop: 6, textAlign: 'left' }} placeholder="Balance" />
               </div>
-              <div>
-                <div style={{ ...S.label, marginBottom: 6 }}>Balance</div>
-                <input type="number" value={pendingExtraction.detected_balance}
-                  onChange={e => setPendingExtraction(p => ({ ...p, detected_balance: e.target.value }))} style={S.input} />
-              </div>
-            </div>
+            ))}
             <button onClick={() => setShowRaw(v => !v)}
               style={{ ...S.btnGhost, width: '100%', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
               <ChevronDown size={11} style={{ transform: showRaw ? 'none' : 'rotate(-90deg)' }} />
@@ -1467,7 +1641,9 @@ export default function FinancesTab({ user, sb, showToast, rates }) {
             )}
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setPendingExtraction(null)} style={{ ...S.btnGhost, flex: 1 }}>Discard</button>
-              <button onClick={confirmExtraction} style={{ ...S.btnDark, flex: 2 }}>Confirm & Save</button>
+              <button onClick={confirmExtraction} style={{ ...S.btnDark, flex: 2 }}>
+                Confirm & Save ({pendingExtraction.items.filter(i => i.matched_account_id).length} accounts)
+              </button>
             </div>
           </motion.div>
         </motion.div>

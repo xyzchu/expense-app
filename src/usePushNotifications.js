@@ -97,11 +97,11 @@ export function usePushNotifications(user, currentList, onError) {
   }, [user, currentList]);
 
   const sendNotification = useCallback(
-    async (title, body, tag = 'expense') => {
+    async (title, body, tag = 'expense', targetUserId = null) => {
       if (!currentList || !user) return;
       try {
         await sb.functions.invoke('send-push', {
-          body: { list_id: currentList.id, sender_user_id: user.id, title, body, tag },
+          body: { list_id: currentList.id, sender_user_id: user.id, title, body, tag, target_user_id: targetUserId },
         });
       } catch (err) {
         console.error('sendNotification error:', err);
