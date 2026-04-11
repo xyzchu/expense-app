@@ -119,7 +119,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   const [editingAccData,setEditingAccData]= useState({});
 
   const TODAY = new Date().toISOString().slice(0, 10);
-  const [newSnapDate, setNewSnapDate] = useState(TODAY);
+  const [newSnapDate,      setNewSnapDate]      = useState(TODAY);
+  const [showNewSnapModal, setShowNewSnapModal] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState({}); // { [accId]: 'saving' | 'saved' }
   const autoSaveTimers = useRef({});
   const [expenseSuggest,   setExpenseSuggest]   = useState(null);
@@ -1013,8 +1014,13 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
       {view === 'table' && (
         <button
-          style={{ ...S.pill(selDate === '__new__'), background: selDate === '__new__' ? '#16a34a' : '#f0fdf4', color: selDate === '__new__' ? '#fff' : '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
-          onClick={() => { setNewSnapDate(TODAY); setSelDate('__new__'); }}>
+          style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
+          onClick={() => {
+            const now = new Date();
+            const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+            setNewSnapDate(endOfLastMonth);
+            setShowNewSnapModal(true);
+          }}>
           + New
         </button>
       )}
@@ -1098,89 +1104,22 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
         </button>
       </div>
 
-      {/* Entry controls — shown for new snapshot */}
-      {(isToday || isNew) && (
-        <div style={{ ...S.card, padding: '12px 14px' }}>
-          {/* Date picker for new snapshot */}
-          {isNew && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ ...S.label, fontSize: 10, color: '#6b7280', flexShrink: 0 }}>Date</span>
-              <input type="date" value={newSnapDate} max={TODAY}
-                onChange={e => setNewSnapDate(e.target.value)}
-                style={{ ...S.input, flex: 1, fontSize: 12 }} />
-            </div>
-          )}
-          {/* Live rates */}
-          {(() => {
-            const liveRates = appToHKD();
-            const entryCurrencies = [...new Set(accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency))].sort();
-            if (!entryCurrencies.length) return null;
-            return (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center' }}>
-                <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
-                {entryCurrencies.map(cur => (
-                  <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 7px', borderRadius: 6 }}>
-                    1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
-                  </span>
-                ))}
-              </div>
-            );
-          })()}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => copyFromLatest(effectiveDate)} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
-              <Copy size={12} /> Copy from latest
-            </button>
-            <button onClick={fetchExpenseSuggestion} disabled={loadingExpenses}
-              style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
-              {loadingExpenses ? <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={12} />}
-              Load Expenses
-            </button>
+      {/* Live rates — shown when in new/today mode */}
+      {(isToday || isNew) && (() => {
+        const liveRates = appToHKD();
+        const entryCurrencies = [...new Set(accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency))].sort();
+        if (!entryCurrencies.length) return null;
+        return (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center', padding: '0 2px' }}>
+            <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
+            {entryCurrencies.map(cur => (
+              <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 7px', borderRadius: 6 }}>
+                1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
+              </span>
+            ))}
           </div>
-          {expenseSuggest && (
-            <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef2f2', borderRadius: 10, border: '1px solid #fecaca' }}>
-              <div style={{ fontFamily: MONO, fontSize: 11, color: '#991b1b', fontWeight: 700 }}>
-                "{homeListName}"{expenseSuggest.person ? ` · ${expenseSuggest.person}` : ''}
-              </div>
-              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', marginTop: 2 }}>
-                {fmtDate(expenseSuggest.fromDate)} → {fmtDate(expenseSuggest.toDate)}
-              </div>
-              <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
-                <div>
-                  <div style={{ fontFamily: MONO, fontSize: 9, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Expenses</div>
-                  <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#dc2626' }}>
-                    {fmtNum(expenseSuggest.total, expenseSuggest.currency)}
-                  </div>
-                </div>
-                {expenseSuggest.incomeTotal > 0 && (
-                  <div>
-                    <div style={{ fontFamily: MONO, fontSize: 9, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Income</div>
-                    <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#16a34a' }}>
-                      {fmtNum(expenseSuggest.incomeTotal, expenseSuggest.currency)}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {expenseSuggest.balances?.length > 0 && (
-                <div style={{ marginTop: 8, borderTop: '1px solid #fecaca', paddingTop: 8 }}>
-                  {expenseSuggest.balances.map((t, i) => {
-                    const iOwe = t.from === expenseSuggest.person;
-                    return (
-                      <div key={i} style={{ fontFamily: MONO, fontSize: 11, marginBottom: 3, display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: iOwe ? '#991b1b' : '#15803d' }}>
-                          {t.from} owes {t.to}
-                        </span>
-                        <span style={{ fontWeight: 700, color: iOwe ? '#dc2626' : '#16a34a' }}>
-                          {fmtNum(t.amount, balanceCurrency || expenseSuggest.currency)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {/* Exchange rates for selected snapshot */}
       {usedCurrencies.length > 0 && selDate && (
@@ -1922,6 +1861,30 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
               <button onClick={() => setShowAddAcc(false)} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
               <button onClick={addAccount} style={{ ...S.btnDark, flex: 2 }}>Add Account</button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* New snapshot date confirmation modal */}
+      {showNewSnapModal && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
+            style={{ background: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
+            <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, marginBottom: 8 }}>New Snapshot</div>
+            <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+              Confirm the snapshot date. Balances will be copied from the most recent data.
+            </div>
+            <input type="date" value={newSnapDate} max={TODAY}
+              onChange={e => setNewSnapDate(e.target.value)}
+              style={{ ...S.input, width: '100%', fontSize: 14, marginBottom: 20 }} />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowNewSnapModal(false)} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
+              <button onClick={async () => {
+                setShowNewSnapModal(false);
+                await copyFromLatest(newSnapDate);
+              }} style={{ ...S.btnDark, flex: 2 }}>Create Snapshot</button>
             </div>
           </motion.div>
         </motion.div>
