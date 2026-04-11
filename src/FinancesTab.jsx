@@ -690,11 +690,6 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     if (view === 'summary' && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
   }, [view, selSummaryMonth, loadHomeStatsForMonth]);
 
-  // Load Home list expenses when chat view opens
-  useEffect(() => {
-    if (view === 'chat') loadHomeExpenses();
-  }, [view, loadHomeExpenses]);
-
   /* ── add account ── */
   const addAccount = async () => {
     if (!newAcc.bank || !newAcc.account_name) return;
@@ -784,6 +779,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       setHomeExpenses((exps || []).map(e => ({ ...e, listCurrency: listDefaultCur })));
     } catch (err) { console.error('loadHomeExpenses error:', err); setHomeExpensesLoaded(false); }
   }, [sb, user, homeListName, homeExpensesLoaded]);
+
+  // Load Home list expenses when chat view opens
+  useEffect(() => {
+    if (view === 'chat') loadHomeExpenses();
+  }, [view, loadHomeExpenses]);
 
   const buildContext = () => {
     const recentDates = dates.slice(0, 24);
