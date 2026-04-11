@@ -614,17 +614,14 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
         .select('total_amount, shares, original_currency, split_type, list_id, paid_by, category')
         .in('list_id', allListIds).neq('split_type', 'settlement')
         .gte('date', prevSnapDate).lte('date', selDate);
+      // shares are always in the list's default currency — do NOT use original_currency here
       let incomeTotal = 0;
       for (const exp of rangeExps || []) {
         if (targetName) {
-          const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
           const userShare = exp.shares?.[targetName];
           if (userShare != null) {
-            if (exp.category === 'Income') {
-              incomeTotal += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
-            } else {
-              total += cvtHKD(userShare, cur, listDefaultCur, hkdRates);
-            }
+            if (exp.category === 'Income') incomeTotal += userShare;
+            else total += userShare;
           }
         }
       }
@@ -641,6 +638,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
 
   /* ── load Home list income/expense totals for a given month ── */
   const loadedMonthsRef = useRef(new Set());
+  // Clear cache when homeListName or expensePerson changes so stats reload with correct person
+  useEffect(() => { loadedMonthsRef.current = new Set(); setHomeMonthlyStats({}); }, [homeListName, expensePerson]);
   const loadHomeStatsForMonth = useCallback(async (month) => {
     if (!sb || !user || !month) return;
     if (loadedMonthsRef.current.has(month)) return;
@@ -668,14 +667,13 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
         .in('list_id', [...homeListIds]).neq('split_type', 'settlement')
         .gte('date', `${month}-01`).lt('date', nextMonth);
 
+      // shares are always stored in the list's default currency — do NOT use original_currency here
       let income = 0, expense = 0;
       for (const exp of exps || []) {
-        const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
         const share = exp.shares?.[targetName];
         if (share != null) {
-          const converted = cvtHKD(share, cur, listDefaultCur, hkdRates);
-          if (exp.category === 'Income') income += converted;
-          else expense += converted;
+          if (exp.category === 'Income') income += share;
+          else expense += share;
         }
       }
       setHomeMonthlyStats(prev => ({ ...prev, [month]: { income, expense, currency: listDefaultCur } }));
