@@ -1460,66 +1460,45 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
               </div>
             </div>
           )}
-          {/* Income / Expense / Net Income (Old = account balances) */}
-          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>
-          {[
-            { label: 'Income',    value: income,  prev: prevIncome  },
-            { label: '− Expense', value: expense, prev: prevExpense, negate: true },
-          ].map(row => {
-            const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
-            return (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {diff != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
-                      {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
-                    </span>
-                  )}
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#1a1a1a' }}>
-                    {fmtNum(row.value, displayCurrency)}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income (Old)</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {prevNetIncome != null && (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: (netIncome - prevNetIncome) >= 0 ? '#16a34a' : '#dc2626' }}>
-                  {(netIncome - prevNetIncome) >= 0 ? '+' : ''}{fmtNum(netIncome - prevNetIncome, displayCurrency)}
-                </span>
-              )}
-              <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netIncome >= 0 ? '#16a34a' : '#dc2626' }}>
-                {fmtNum(netIncome, displayCurrency)}
-              </span>
-            </div>
-          </div>
-          </div>
-
-          {/* Net Income (New) = from Home list expenses for the month */}
+          {/* Income / Expense / Combined Net Income */}
           {(() => {
             const hs = homeMonthlyStats[sm];
-            if (!hs) return null;
-            const newNetIncome = hs.income - hs.expense;
+            const hsCur = hs?.currency || displayCurrency;
+            // Convert old income/expense to home list currency for combined total
+            // (they may differ if displayCurrency != hsCur, but best effort: show in displayCurrency)
+            const combinedIncome  = income  + (hs ? cvtHKD(hs.income,  hsCur, displayCurrency, getRatesForMonth(sm)) : 0);
+            const combinedExpense = expense + (hs ? cvtHKD(hs.expense, hsCur, displayCurrency, getRatesForMonth(sm)) : 0);
+            const combinedNet = combinedIncome - combinedExpense;
+            const rows = [
+              { label: 'Income (Old)',          value: income,       prev: prevIncome,   color: '#16a34a', cur: displayCurrency },
+              hs && hs.income  > 0 ? { label: `Income (${homeListName})`,   value: cvtHKD(hs.income, hsCur, displayCurrency, getRatesForMonth(sm)), color: '#16a34a', cur: displayCurrency } : null,
+              { label: '− Expense (Old)',        value: expense,      prev: prevExpense,  color: '#dc2626', cur: displayCurrency, negate: true },
+              hs && hs.expense > 0 ? { label: `− Expense (${homeListName})`, value: cvtHKD(hs.expense, hsCur, displayCurrency, getRatesForMonth(sm)), color: '#dc2626', cur: displayCurrency } : null,
+            ].filter(Boolean);
             return (
-              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2 }}>
-                {[
-                  { label: `Income (${homeListName})`,  value: hs.income,  color: '#16a34a' },
-                  { label: `− Expense (${homeListName})`, value: hs.expense, color: '#dc2626' },
-                ].map(row => (
-                  <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: row.color }}>
-                      {fmtNum(row.value, hs.currency)}
-                    </span>
-                  </div>
-                ))}
+              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>
+                {rows.map(row => {
+                  const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+                  return (
+                    <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {diff != null && (
+                          <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                            {diff >= 0 ? '+' : ''}{fmtNum(diff, row.cur)}
+                          </span>
+                        )}
+                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: row.color }}>
+                          {fmtNum(row.value, row.cur)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
                 <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income (New)</span>
-                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: newNetIncome >= 0 ? '#16a34a' : '#dc2626' }}>
-                    {fmtNum(newNetIncome, hs.currency)}
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income</span>
+                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: combinedNet >= 0 ? '#16a34a' : '#dc2626' }}>
+                    {fmtNum(combinedNet, displayCurrency)}
                   </span>
                 </div>
               </div>
