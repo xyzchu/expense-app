@@ -1141,23 +1141,35 @@ export default function SplitEase() {
           const thisMonth = new Date().toISOString().slice(0,7);
           const lm = new Date(); lm.setDate(1); lm.setMonth(lm.getMonth()-1);
           const lastMonth = lm.toISOString().slice(0,7);
-          const spend = {}; names.forEach(n => { spend[n] = {cur:0, prev:0}; });
+          const spend = {}; names.forEach(n => { spend[n] = {exp:0, inc:0, prevExp:0, prevInc:0}; });
           expenses.filter(e => e.split_type !== 'settlement').forEach(e => {
             const m = e.date?.slice(0,7);
+            const isIncome = e.category === 'Income';
             Object.entries(e.shares||{}).forEach(([n,a]) => {
               if (!spend[n]) return;
-              if (m === thisMonth) spend[n].cur += a;
-              else if (m === lastMonth) spend[n].prev += a;
+              if (m === thisMonth) { if (isIncome) spend[n].inc += a; else spend[n].exp += a; }
+              else if (m === lastMonth) { if (isIncome) spend[n].prevInc += a; else spend[n].prevExp += a; }
             });
           });
           return (
             <div style={{display:'grid',gridTemplateColumns:`repeat(${Math.min(names.length,2)}, 1fr)`,gap:8,marginTop:12}}>
               {names.map(n => (
                 <div key={n} style={{background:'#f3f4f6',borderRadius:12,padding:'10px 12px'}}>
-                  <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:4}}>{n}</div>
-                  <div style={{fontSize:14,fontWeight:700,...s.tabnum}}>{fmt(spend[n].cur, defCur)}</div>
-                  <div style={{fontSize:10,opacity:0.4,...s.upper,marginTop:2}}>this month</div>
-                  <div style={{fontSize:10,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prev, defCur)} last month</div>
+                  <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>{n}</div>
+                  <div style={{display:'flex',gap:10}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:9,...s.upper,color:'#dc2626',opacity:0.7,marginBottom:2}}>Expense</div>
+                      <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:'#1a1a1a'}}>{fmt(spend[n].exp, defCur)}</div>
+                      {spend[n].prevExp > 0 && <div style={{fontSize:9,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prevExp, defCur)} prev</div>}
+                    </div>
+                    {spend[n].inc > 0 || spend[n].prevInc > 0 ? (
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:9,...s.upper,color:'#16a34a',opacity:0.9,marginBottom:2}}>Income</div>
+                        <div style={{fontSize:13,fontWeight:700,...s.tabnum,color:'#16a34a'}}>{fmt(spend[n].inc, defCur)}</div>
+                        {spend[n].prevInc > 0 && <div style={{fontSize:9,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prevInc, defCur)} prev</div>}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
