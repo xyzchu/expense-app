@@ -978,27 +978,44 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   ══════════════════════════════════════════════════════════════ */
 
   const TopBar = (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 16px 8px' }}>
-      <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Finances</div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button onClick={() => fileRef.current?.click()} disabled={extracting}
-          style={{ ...S.btnGhost, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
-          {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
-          <span style={{ fontSize: 11 }}>Scan</span>
-        </button>
+    <div style={{ padding: '16px 16px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Finances</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
+            style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '5px 8px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
+            {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <button onClick={() => fileRef.current?.click()} disabled={extracting}
+            style={{ ...S.btnGhost, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
+            {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
+            <span style={{ fontSize: 11 }}>Scan</span>
+          </button>
+        </div>
         <input ref={fileRef} type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleExtractFile} />
         <input ref={importCsvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImportCsvFile} />
         <input ref={importJsonRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJsonFile} />
       </div>
-    </div>
-  );
-
-  const CurrencyPills = (
-    <div style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
-      <span style={{ ...S.label, lineHeight: '26px', flexShrink: 0 }}>View in</span>
-      {ALL_CUR.map(c => (
-        <button key={c} style={S.pill(c === displayCurrency)} onClick={() => changeDisplayCurrency(c)}>{c}</button>
-      ))}
+      {/* View toggle sits directly under the heading */}
+      <div style={{ display: 'flex', gap: 0, background: '#f3f4f6', borderRadius: 12, padding: 3, marginBottom: 10 }}>
+        {[
+          { id: 'table',    icon: Table2,        label: 'Table'    },
+          { id: 'summary',  icon: TrendingUp,    label: 'Summary'  },
+          { id: 'chat',     icon: MessageSquare, label: 'Chat'     },
+          { id: 'settings', icon: Settings2,     label: 'Settings' },
+        ].map(v => (
+          <button key={v.id} onClick={() => setView(v.id)} style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
+            padding: '7px 4px', borderRadius: 9, border: 'none', cursor: 'pointer', fontFamily: MONO,
+            fontSize: 10, fontWeight: 600, transition: 'all 0.15s',
+            background: view === v.id ? '#fff' : 'transparent',
+            color: view === v.id ? '#1a1a1a' : '#9ca3af',
+            boxShadow: view === v.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+          }}>
+            <v.icon size={13} /><span>{v.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 
@@ -1055,27 +1072,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     </div>
   ) : null;
 
-  const ViewToggle = (
-    <div style={{ display: 'flex', gap: 0, margin: '0 16px 12px', background: '#f3f4f6', borderRadius: 12, padding: 3 }}>
-      {[
-        { id: 'table',   icon: Table2,       label: 'Table'   },
-        { id: 'summary', icon: TrendingUp,   label: 'Summary' },
-        { id: 'chat',    icon: MessageSquare,label: 'Chat'    },
-        { id: 'settings',icon: Settings2,    label: 'Settings'},
-      ].map(v => (
-        <button key={v.id} onClick={() => setView(v.id)} style={{
-          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
-          padding: '7px 2px', border: 'none', cursor: 'pointer', borderRadius: 10,
-          background: view === v.id ? '#fff' : 'none',
-          color: view === v.id ? '#1a1a1a' : '#9ca3af',
-          fontFamily: MONO, fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
-          boxShadow: view === v.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', transition: 'all 0.15s',
-        }}>
-          <v.icon size={13} /><span>{v.label}</span>
-        </button>
-      ))}
-    </div>
-  );
+
 
   /* ── TABLE VIEW ── */
   const TableView = (() => {
@@ -1957,10 +1954,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     <div className="se" style={{ fontFamily: MONO, maxWidth: 480, margin: '0 auto', minHeight: '100vh', background: '#f8f9fa' }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       {TopBar}
-      {CurrencyPills}
       {(view === 'table' || view === 'summary') && DatePills}
       {(view === 'table' || view === 'summary') && RatesBar}
-      {ViewToggle}
       <div style={{ overflowY: 'auto' }}>
         {view === 'table'   && TableView}
         {view === 'summary' && SummaryView}
