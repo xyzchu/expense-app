@@ -121,8 +121,9 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   const TODAY = new Date().toISOString().slice(0, 10);
   const [autoSaveStatus, setAutoSaveStatus] = useState({}); // { [accId]: 'saving' | 'saved' }
   const autoSaveTimers = useRef({});
-  const [expenseSuggest, setExpenseSuggest] = useState(null);
-  const [loadingExpenses,setLoadingExpenses]= useState(false);
+  const [expenseSuggest,   setExpenseSuggest]   = useState(null);
+  const [loadingExpenses,  setLoadingExpenses]  = useState(false);
+  const [homeMonthlyStats, setHomeMonthlyStats] = useState({}); // { [month]: { income, expense, currency } }
 
   // extraction
   const [extracting,        setExtracting]        = useState(false);
@@ -635,6 +636,49 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     } catch (err) { console.error('Expense suggestion error:', err); }
     setLoadingExpenses(false);
   }, [sb, user, selDate, dates, snapshots, accounts, getRatesForDate, homeListName, expensePerson]);
+
+  /* ── load Home list income/expense totals for a given month ── */
+  const loadHomeStatsForMonth = useCallback(async (month) => {
+    if (!sb || !user || !month) return;
+    if (homeMonthlyStats[month]) return; // already loaded
+    try {
+      const { data: memberships } = await sb.from('list_members').select('list_id, display_name').eq('user_id', user.id);
+      if (!memberships?.length) return;
+      const listIds = [...new Set(memberships.map(m => m.list_id))];
+      const { data: listData } = await sb.from('expense_lists').select('id, name, default_currency').in('id', listIds);
+      const homeLists = (listData || []).filter(l => l.name === homeListName);
+      if (!homeLists.length) return;
+      const homeListIds = new Set(homeLists.map(l => l.id));
+      const listCur = {};
+      for (const l of listData || []) listCur[l.id] = l.default_currency || 'HKD';
+      const listDefaultCur = homeLists[0].default_currency || 'HKD';
+      const myName = memberships.find(m => homeListIds.has(m.list_id))?.display_name || '';
+      const targetName = expensePerson || myName || '';
+      const hkdRates = getRatesForMonth(month);
+
+      const { data: exps } = await sb.from('expenses')
+        .select('shares, original_currency, split_type, list_id, category')
+        .in('list_id', [...homeListIds]).neq('split_type', 'settlement')
+        .gte('date', `${month}-01`).lt(`${month}-01`.replace(/^(\d{4})-(\d{2})/, (_, y, m) => { const nm = Number(m) + 1; return nm > 12 ? `${Number(y)+1}-01` : `${y}-${String(nm).padStart(2,'0')}`; }));
+
+      let income = 0, expense = 0;
+      for (const exp of exps || []) {
+        const cur = exp.original_currency || listCur[exp.list_id] || listDefaultCur;
+        const share = exp.shares?.[targetName];
+        if (share != null) {
+          const inDisp = cvtHKD(share, cur, listDefaultCur, hkdRates);
+          if (exp.category === 'Income') income += inDisp;
+          else expense += inDisp;
+        }
+      }
+      setHomeMonthlyStats(prev => ({ ...prev, [month]: { income, expense, currency: listDefaultCur } }));
+    } catch (err) { console.error('loadHomeStatsForMonth error:', err); }
+  }, [sb, user, homeListName, expensePerson, getRatesForMonth, homeMonthlyStats]);
+
+  // Auto-load home stats when summary month changes
+  useEffect(() => {
+    if (view === 'summary' && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
+  }, [view, selSummaryMonth, loadHomeStatsForMonth]);
 
   /* ── add account ── */
   const addAccount = async () => {
@@ -1359,7 +1403,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
               </div>
             </div>
           )}
-          {/* Income / Expense / Net Income */}
+          {/* Income / Expense / Net Income (Old = account balances) */}
           <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>
           {[
             { label: 'Income',    value: income,  prev: prevIncome  },
@@ -1383,7 +1427,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             );
           })}
           <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income</span>
+            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income (Old)</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {prevNetIncome != null && (
                 <span style={{ fontFamily: MONO, fontSize: 10, color: (netIncome - prevNetIncome) >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -1396,6 +1440,34 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             </div>
           </div>
           </div>
+
+          {/* Net Income (New) = from Home list expenses for the month */}
+          {(() => {
+            const hs = homeMonthlyStats[sm];
+            if (!hs) return null;
+            const newNetIncome = hs.income - hs.expense;
+            return (
+              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2 }}>
+                {[
+                  { label: `Income (${homeListName})`,  value: hs.income,  color: '#16a34a' },
+                  { label: `− Expense (${homeListName})`, value: hs.expense, color: '#dc2626' },
+                ].map(row => (
+                  <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: row.color }}>
+                      {fmtNum(row.value, hs.currency)}
+                    </span>
+                  </div>
+                ))}
+                <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income (New)</span>
+                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: newNetIncome >= 0 ? '#16a34a' : '#dc2626' }}>
+                    {fmtNum(newNetIncome, hs.currency)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {CATS.map(cat => {
