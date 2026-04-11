@@ -119,6 +119,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   const [editingAccData,setEditingAccData]= useState({});
 
   const TODAY = new Date().toISOString().slice(0, 10);
+  const [newSnapDate, setNewSnapDate] = useState(TODAY);
   const [autoSaveStatus, setAutoSaveStatus] = useState({}); // { [accId]: 'saving' | 'saved' }
   const autoSaveTimers = useRef({});
   const [expenseSuggest,   setExpenseSuggest]   = useState(null);
@@ -550,14 +551,17 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       { onConflict: 'user_id,snapshot_date' }
     );
     await loadAll();
+    // If we were in "new" mode, switch the pill to the actual saved date
+    if (selDate === '__new__') setSelDate(date);
     setAutoSaveStatus(p => ({ ...p, [accId]: 'saved' }));
     if (autoSaveTimers.current[accId]) clearTimeout(autoSaveTimers.current[accId]);
     autoSaveTimers.current[accId] = setTimeout(() => setAutoSaveStatus(p => { const n = {...p}; delete n[accId]; return n; }), 2000);
-  }, [sb, user]);
+  }, [sb, user, selDate]);
 
   /* ── copy from latest → save all to DB immediately ── */
-  const copyFromLatest = useCallback(async () => {
-    if (!selDate || !sb || !user) return;
+  const copyFromLatest = useCallback(async (targetDate) => {
+    const date = targetDate || selDate;
+    if (!date || date === '__new__' || !sb || !user) return;
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 45);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     const rows = [];
@@ -565,16 +569,17 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       const recent = snapshots
         .filter(s => s.account_id === acc.id && s.snapshot_date >= cutoffStr)
         .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
-      if (recent?.balance != null) rows.push({ account_id: acc.id, user_id: user.id, snapshot_date: selDate, balance: recent.balance });
+      if (recent?.balance != null) rows.push({ account_id: acc.id, user_id: user.id, snapshot_date: date, balance: recent.balance });
     }
     if (!rows.length) { showToast?.('No data within last 45 days'); return; }
     await sb.from('financial_snapshots').upsert(rows, { onConflict: 'account_id,snapshot_date' });
     await sb.from('financial_date_rates').upsert(
-      { user_id: user.id, snapshot_date: selDate, rates: appToHKD() },
+      { user_id: user.id, snapshot_date: date, rates: appToHKD() },
       { onConflict: 'user_id,snapshot_date' }
     );
     await loadAll();
-    showToast?.(`Copied ${rows.length} accounts to ${fmtDate(selDate)}`);
+    setSelDate(date);
+    showToast?.(`Copied ${rows.length} accounts to ${fmtDate(date)}`);
   }, [selDate, sb, user, accounts, snapshots]);
 
   /* ── expense suggestion from Home tab ── */
@@ -1008,8 +1013,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
       {view === 'table' && (
         <button
-          style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
-          onClick={() => setSelDate(TODAY)}>
+          style={{ ...S.pill(selDate === '__new__'), background: selDate === '__new__' ? '#16a34a' : '#f0fdf4', color: selDate === '__new__' ? '#fff' : '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
+          onClick={() => { setNewSnapDate(TODAY); setSelDate('__new__'); }}>
           + New
         </button>
       )}
@@ -1069,9 +1074,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   /* ── TABLE VIEW ── */
   const TableView = (() => {
     const isCurrent = selDate === 'current';
+    const isNew = selDate === '__new__';
     const isToday = selDate === TODAY;
-    const histRates = (!isCurrent && !isToday && selDate) ? dateRates[selDate] : null;
-    const isHistorical = isCurrent || (!!selDate && !isToday);
+    const effectiveDate = isNew ? newSnapDate : selDate;
+    const histRates = (!isCurrent && !isNew && !isToday && selDate) ? dateRates[selDate] : null;
+    const isHistorical = isCurrent || (!!selDate && !isToday && !isNew);
     const activeRates = histRates || appToHKD();
     const usedCurrencies = [...new Set(
       accounts
@@ -1091,9 +1098,18 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
         </button>
       </div>
 
-      {/* Entry controls — only shown for today's date */}
-      {isToday && (
+      {/* Entry controls — shown for new snapshot */}
+      {(isToday || isNew) && (
         <div style={{ ...S.card, padding: '12px 14px' }}>
+          {/* Date picker for new snapshot */}
+          {isNew && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ ...S.label, fontSize: 10, color: '#6b7280', flexShrink: 0 }}>Date</span>
+              <input type="date" value={newSnapDate} max={TODAY}
+                onChange={e => setNewSnapDate(e.target.value)}
+                style={{ ...S.input, flex: 1, fontSize: 12 }} />
+            </div>
+          )}
           {/* Live rates */}
           {(() => {
             const liveRates = appToHKD();
@@ -1111,7 +1127,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             );
           })()}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={copyFromLatest} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
+            <button onClick={() => copyFromLatest(effectiveDate)} style={{ ...S.btnGhost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 11 }}>
               <Copy size={12} /> Copy from latest
             </button>
             <button onClick={fetchExpenseSuggestion} disabled={loadingExpenses}
@@ -1196,11 +1212,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             <div style={{ ...S.label, marginBottom: 5, paddingLeft: 2 }}>{bank}</div>
             <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
               {bankAccs.map((acc, i) => {
-                const savedBal = selDate ? bal(acc.id, selDate) : null;
+                const savedBal = effectiveDate ? bal(acc.id, effectiveDate) : null;
                 const miles = acc.category === 'Points/Miles' && savedBal != null && acc.metadata?.miles_ratio
                   ? Math.round(savedBal / acc.metadata.miles_ratio * 1000) : null;
                 const latestSnap = snapshots.filter(s => s.account_id === acc.id).sort((a,b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
-                const displayDate = autoSaveStatus[acc.id] === 'saved' ? selDate : latestSnap?.snapshot_date;
+                const displayDate = autoSaveStatus[acc.id] === 'saved' ? effectiveDate : latestSnap?.snapshot_date;
                 const isEditing = editingAccId === acc.id;
                 return (
                   <div key={acc.id} style={{ borderBottom: i < bankAccs.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
@@ -1259,8 +1275,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                       <input
                         type="number"
                         defaultValue={savedBal != null ? String(savedBal) : ''}
-                        key={`${acc.id}-${selDate}`}
-                        onBlur={e => { if (e.target.value !== '') autoSaveField(acc.id, e.target.value, selDate); }}
+                        key={`${acc.id}-${effectiveDate}`}
+                        onBlur={e => { if (e.target.value !== '') autoSaveField(acc.id, e.target.value, effectiveDate); }}
                         placeholder={savedBal != null ? String(savedBal) : '—'}
                         style={{ ...S.inputSm, color: savedBal != null ? '#1a1a1a' : '#9ca3af' }}
                       />
