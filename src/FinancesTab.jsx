@@ -105,9 +105,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   const [accounts,  setAccounts]  = useState([]);
   const [snapshots, setSnapshots] = useState([]);
   const [dateRates, setDateRates] = useState({});  // { "2026-03-12": { HKD:1, AUD:5.12, ... } }
-  const [dates,     setDates]     = useState([]);
-  const [selDate,   setSelDate]   = useState('');
-  const [view,      setView]      = useState('table');
+  const [dates,            setDates]           = useState([]);
+  const [selDate,          setSelDate]         = useState('');
+  const [summaryMonths,    setSummaryMonths]   = useState([]);
+  const [selSummaryMonth,  setSelSummaryMonth] = useState('');
+  const [view,             setView]            = useState('table');
   const [displayCurrency, setDisplayCurrency] = useState('HKD');
 
   // account management
@@ -173,6 +175,9 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     const unique = [...new Set(snapshots.map(s => s.snapshot_date))].sort().reverse();
     setDates(unique);
     if (!selDate && unique.length) setSelDate(unique[0]);
+    const months = [...new Set(snapshots.map(s => s.snapshot_date.slice(0, 7)))].sort().reverse();
+    setSummaryMonths(months);
+    if (!selSummaryMonth && months.length) setSelSummaryMonth(months[0]);
   }, [snapshots]);
 
   /* ── clear expense suggestion when date changes ── */
@@ -268,6 +273,48 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   };
 
   const prevDate = selDate === 'current' ? (dates[0] || null) : (dates[dates.indexOf(selDate) + 1] || null);
+
+  /* ── month-based helpers for Summary view ── */
+  // Latest balance for an account within a given month (YYYY-MM)
+  const balForMonth = useCallback((accId, month) => {
+    const snap = snapshots
+      .filter(s => s.account_id === accId && s.snapshot_date.startsWith(month))
+      .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
+    return snap?.balance ?? null;
+  }, [snapshots]);
+
+  // Latest rates record within a given month
+  const getRatesForMonth = useCallback((month) => {
+    const entry = Object.entries(dateRates)
+      .filter(([d]) => d.startsWith(month))
+      .sort((a, b) => b[0].localeCompare(a[0]))[0];
+    return entry ? entry[1] : appToHKD();
+  }, [dateRates, appToHKD]);
+
+  const toDisplayForMonth = useCallback((amount, fromCur, month) =>
+    cvtHKD(amount, fromCur, displayCurrency, getRatesForMonth(month)),
+  [displayCurrency, getRatesForMonth]);
+
+  const catTotalForMonth = useCallback((cat, month) =>
+    accounts.filter(a => a.category === cat).reduce((sum, a) => {
+      if (a.currency === 'PTS') return sum;
+      const b = balForMonth(a.id, month);
+      return b != null ? sum + toDisplayForMonth(b, a.currency, month) : sum;
+    }, 0),
+  [accounts, balForMonth, toDisplayForMonth]);
+
+  const catByCurrencyForMonth = useCallback((cat, month) => {
+    const byCur = {};
+    for (const acc of accounts.filter(a => a.category === cat)) {
+      const b = balForMonth(acc.id, month);
+      if (b != null) byCur[acc.currency] = (byCur[acc.currency] || 0) + b;
+    }
+    return byCur;
+  }, [accounts, balForMonth]);
+
+  const prevSummaryMonth = selSummaryMonth
+    ? (summaryMonths[summaryMonths.indexOf(selSummaryMonth) + 1] || null)
+    : null;
 
   /* ── import CSV (app's own export format) ── */
   const handleImportCsvFile = (e) => {
@@ -850,14 +897,20 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     </div>
   );
 
-  const DatePills = (
-    <div style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
+  const DatePills = view === 'summary' ? (
+    <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
+      {summaryMonths.map(m => (
+        <button key={m} style={S.pill(m === selSummaryMonth)} onClick={() => setSelSummaryMonth(m)}>
+          {new Date(m + '-02').toLocaleDateString('en', { month: 'short', year: 'numeric' })}
+        </button>
+      ))}
+    </div>
+  ) : (
+    <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
       {view === 'table' && (
         <button
           style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
-          onClick={() => {
-            setSelDate(TODAY);
-          }}>
+          onClick={() => setSelDate(TODAY)}>
           + New
         </button>
       )}
@@ -868,17 +921,21 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     </div>
   );
 
-  // Collapsible rates bar for selected date
-  const RatesBar = selDate && dateRates[selDate] ? (
+  // Collapsible rates bar
+  const ratesForBar = view === 'summary' ? getRatesForMonth(selSummaryMonth) : (selDate ? dateRates[selDate] : null);
+  const ratesBarLabel = view === 'summary'
+    ? `Rates for ${selSummaryMonth ? new Date(selSummaryMonth + '-02').toLocaleDateString('en', { month: 'short', year: 'numeric' }) : ''} (historical)`
+    : `Rates for ${fmtDate(selDate)} (historical)`;
+  const RatesBar = ratesForBar && Object.keys(ratesForBar).length > 1 ? (
     <div style={{ padding: '0 16px 8px' }}>
       <button onClick={() => setShowRatesFor(v => !v)}
         style={{ ...S.btnGhost, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
         <ChevronDown size={11} style={{ transform: showRatesFor ? 'none' : 'rotate(-90deg)', transition: '0.15s' }} />
-        Rates for {fmtDate(selDate)} (historical)
+        {ratesBarLabel}
       </button>
       {showRatesFor && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 2px 4px' }}>
-          {Object.entries(dateRates[selDate]).filter(([c]) => c !== 'HKD').map(([cur, rate]) => (
+          {Object.entries(ratesForBar).filter(([c]) => c !== 'HKD').map(([cur, rate]) => (
             <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: 6 }}>
               1 {cur} = {rate.toFixed(2)} HKD
             </span>
@@ -1198,26 +1255,28 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       );
     };
 
-    const cash    = catTotalOnDate('Cash',        selDate);
-    const sec     = catTotalOnDate('Securities',  selDate);
-    const cc      = catTotalOnDate('Credit Card', selDate);
-    const loan    = catTotalOnDate('Loan',        selDate);
-    const income  = catTotalOnDate('Income',      selDate);
-    const expense = catTotalOnDate('Expense',     selDate);
-    const prop    = catTotalOnDate('Property',    selDate);
+    const sm  = selSummaryMonth;
+    const pm  = prevSummaryMonth;
+    const cash    = catTotalForMonth('Cash',        sm);
+    const sec     = catTotalForMonth('Securities',  sm);
+    const cc      = catTotalForMonth('Credit Card', sm);
+    const loan    = catTotalForMonth('Loan',        sm);
+    const income  = catTotalForMonth('Income',      sm);
+    const expense = catTotalForMonth('Expense',     sm);
+    const prop    = catTotalForMonth('Property',    sm);
     const netWorth    = cash + sec - cc;
     const netProperty = prop - loan;
     const netIncome   = income - expense;
-    const prevCash    = prevDate ? catTotalOnDate('Cash',        prevDate) : null;
-    const prevSec     = prevDate ? catTotalOnDate('Securities',  prevDate) : null;
-    const prevCC      = prevDate ? catTotalOnDate('Credit Card', prevDate) : null;
-    const prevLoan    = prevDate ? catTotalOnDate('Loan',        prevDate) : null;
-    const prevIncome  = prevDate ? catTotalOnDate('Income',      prevDate) : null;
-    const prevExpense = prevDate ? catTotalOnDate('Expense',     prevDate) : null;
-    const prevProp    = prevDate ? catTotalOnDate('Property',    prevDate) : null;
-    const prevNetWorth    = prevDate ? (prevCash + prevSec - prevCC) : null;
-    const prevNetProperty = prevDate ? (prevProp - prevLoan) : null;
-    const prevNetIncome   = prevDate ? (prevIncome - prevExpense) : null;
+    const prevCash    = pm ? catTotalForMonth('Cash',        pm) : null;
+    const prevSec     = pm ? catTotalForMonth('Securities',  pm) : null;
+    const prevCC      = pm ? catTotalForMonth('Credit Card', pm) : null;
+    const prevLoan    = pm ? catTotalForMonth('Loan',        pm) : null;
+    const prevIncome  = pm ? catTotalForMonth('Income',      pm) : null;
+    const prevExpense = pm ? catTotalForMonth('Expense',     pm) : null;
+    const prevProp    = pm ? catTotalForMonth('Property',    pm) : null;
+    const prevNetWorth    = pm ? (prevCash + prevSec - prevCC) : null;
+    const prevNetProperty = pm ? (prevProp - prevLoan) : null;
+    const prevNetIncome   = pm ? (prevIncome - prevExpense) : null;
 
     return (
       <div style={{ padding: '0 16px 80px' }}>
@@ -1341,12 +1400,12 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
 
         {CATS.map(cat => {
           const isInfoOnly = cat === 'Others';
-          const byCur     = catByCurrency(cat, selDate);
-          const prevByCur = prevDate ? catByCurrency(cat, prevDate) : {};
+          const byCur     = catByCurrencyForMonth(cat, sm);
+          const prevByCur = pm ? catByCurrencyForMonth(cat, pm) : {};
           const curCurs   = Object.keys(byCur);
           if (!curCurs.length) return null;
-          const totalDisp     = catTotalOnDate(cat, selDate);
-          const prevTotalDisp = prevDate ? catTotalOnDate(cat, prevDate) : null;
+          const totalDisp     = catTotalForMonth(cat, sm);
+          const prevTotalDisp = pm ? catTotalForMonth(cat, pm) : null;
           const isExpanded = expandedCats.has(cat);
           const toggleExpand = () => setExpandedCats(prev => {
             const next = new Set(prev);
@@ -1392,7 +1451,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                       ? accounts.filter(a => a.category === 'Points/Miles' && a.currency === cur && a.metadata?.miles_ratio)
                       : [];
                     const totalMiles = milesAccs.reduce((s, a) => {
-                      const b = bal(a.id, selDate);
+                      const b = balForMonth(a.id, sm);
                       return b != null ? s + (b / a.metadata.miles_ratio * 1000) : s;
                     }, 0);
 
@@ -1411,7 +1470,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                           <div style={{ textAlign: 'right' }}>
                             <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>{fmtNum(native, cur)}</div>
                             {cur !== displayCurrency && (
-                              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>= {fmtNum(toDisplay(native, cur, selDate === 'current' ? null : selDate), displayCurrency)}</div>
+                              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>= {fmtNum(toDisplayForMonth(native, cur, sm), displayCurrency)}</div>
                             )}
                             {prevNative != null && (
                               <div style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevNative, cur)}</div>
@@ -1420,7 +1479,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                         </div>
                         {/* Individual accounts in this currency */}
                         {accsInCur.map(acc => {
-                          const b = bal(acc.id, selDate);
+                          const b = balForMonth(acc.id, sm);
                           if (b == null) return null;
                           const miles = acc.metadata?.miles_ratio ? Math.round(b / acc.metadata.miles_ratio * 1000) : null;
                           return (
