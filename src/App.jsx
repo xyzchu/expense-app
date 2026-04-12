@@ -6,7 +6,7 @@ import {
   Search, Pencil, Trash2, X, Send, LogOut, Plus, Users, Check, Copy,
   Upload, Download, UserPlus, Home as HomeIcon, BarChart3,
   Settings as SettingsIcon, ChevronDown, ChevronUp, ArrowRight,
-  RefreshCw, Eye, EyeOff, TrendingUp
+  RefreshCw, Eye, EyeOff, TrendingUp, Receipt
 } from 'lucide-react';
 import {
   XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
@@ -14,6 +14,7 @@ import {
 } from 'recharts';
 import sb from './supabaseClient';
 import FinancesTab from './FinancesTab';
+import TransactionsTab from './TransactionsTab';
 import { usePushNotifications } from './usePushNotifications';
 
 /* ══════════════════════════════════════════════════════════════
@@ -2112,6 +2113,7 @@ export default function SplitEase() {
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
       {tab === 'finances' && <FinancesTab user={user} sb={sb} showToast={showToast} rates={rates} MONO={MONO} balanceTxns={txns} balanceCurrency={defCur} />}
+      {tab === 'transactions' && <TransactionsTab user={user} sb={sb} showToast={showToast} />}
 
       {/* Footer */}
       <div style={{
@@ -2134,6 +2136,7 @@ export default function SplitEase() {
           {id:'home',icon:HomeIcon,label:'Home'},
           {id:'stats',icon:BarChart3,label:'Stats'},
           {id:'finances',icon:TrendingUp,label:'Finances'},
+          {id:'transactions',icon:Receipt,label:'Txns'},
           {id:'settings',icon:SettingsIcon,label:'Settings'},
         ].map(t=>(
           <button key={t.id} onClick={()=>{setTab(t.id);setEditingId(null);}}
