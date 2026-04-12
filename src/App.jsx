@@ -768,7 +768,8 @@ export default function SplitEase() {
     if (!myName) return expenses;
     return expenses.filter(e => {
       const sn = Object.keys(e.shares || {}).filter(n => (e.shares[n] || 0) > 0);
-      return !(sn.length === 1 && sn[0] !== myName);
+      // Hide only if personal to someone else AND I didn't pay for it
+      return !(sn.length === 1 && sn[0] !== myName && e.paid_by !== myName);
     });
   }, [expenses, myName]);
 
