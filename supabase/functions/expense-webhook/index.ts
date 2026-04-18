@@ -15,7 +15,6 @@ serve(async (req) => {
     // Fix common MacroDroid JSON issues:
     // 1. Strip control characters
     // 2. Fix "key":,"value" → "key":"value" (stray comma after colon)
-    // 3. Fix "key": "value" spacing issues
     const sanitized = raw
       .replace(/[\x00-\x1F\x7F]/g, ' ')
       .replace(/:\s*,\s*"/g, ':"');
@@ -56,21 +55,6 @@ serve(async (req) => {
 
     const { list_id, user_id, display_name } = token;
 
-    // Get list default currency + members
-    const [{ data: listRow }, { data: members }] = await Promise.all([
-      supabase.from('expense_lists').select('default_currency').eq('id', list_id).single(),
-      supabase.from('list_members').select('display_name').eq('list_id', list_id),
-    ]);
-
-    const defCur = listRow?.default_currency || 'AUD';
-    const names = (members || []).map((m: { display_name: string }) => m.display_name);
-    if (names.length === 0) {
-      return new Response(JSON.stringify({ error: 'No members in list' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const payer = paid_by || display_name || names[0];
     // Strip currency symbols and spaces MacroDroid might include e.g. "$12.50" or "AUD 12.50"
     const cleanAmount = String(amount).replace(/[^0-9.]/g, '');
     const totalAmount = parseFloat(cleanAmount);
@@ -80,77 +64,66 @@ serve(async (req) => {
       });
     }
 
-    // Determine split based on optional "split" field (0–100):
-    // 0   = personal (payer only, not shared)
-    // 50  = equal split
-    // 100 = 100% to the other member(s)
-    // 30  = payer 70%, others share 30%
-    const splitPct = parseFloat(String(split ?? '50').replace(/[^0-9.]/g, ''));
-    const otherPct = isNaN(splitPct) ? 50 : Math.min(100, Math.max(0, splitPct));
-    const payerPct = 100 - otherPct;
+    const splitPct = split == null ? null : parseFloat(String(split).replace(/[^0-9.]/g, ''));
+    const normalizedSplit = splitPct == null || isNaN(splitPct)
+      ? null
+      : Math.min(100, Math.max(0, splitPct));
 
-    const shares: Record<string, number> = {};
-    let splitType = 'equal';
+    const payer = paid_by || display_name || null;
 
-    if (otherPct === 0) {
-      // Personal — payer only
-      splitType = 'personal';
-      shares[payer] = totalAmount;
-    } else {
-      const others = names.filter((n: string) => n !== payer);
-      if (payerPct > 0) {
-        shares[payer] = Math.round((totalAmount * payerPct / 100) * 100) / 100;
-      }
-      others.forEach((n: string) => {
-        shares[n] = Math.round((totalAmount * otherPct / 100 / others.length) * 100) / 100;
-      });
-    }
-
-    // Handle foreign currency
-    const isForeign = currency && currency !== defCur;
-    const row = {
-      list_id,
-      item: item.trim(),
-      category: 'Other',
-      date: new Date().toISOString().slice(0, 10),
-      total_amount: totalAmount,
-      paid_by: payer,
-      split_type: splitType,
-      shares,
-      original_currency: isForeign ? currency : null,
-      original_amount: isForeign ? totalAmount : null,
-    };
-
-    const { data: expense, error: expErr } = await supabase
-      .from('expenses')
-      .insert(row)
+    // Insert into pending_expenses — the user will confirm + categorize
+    // + pick the split in the app before it moves to the expenses table.
+    const { data: pending, error: pendErr } = await supabase
+      .from('pending_expenses')
+      .insert({
+        list_id,
+        user_id,
+        item: item.trim(),
+        amount: totalAmount,
+        currency: currency || null,
+        paid_by: payer,
+        split: normalizedSplit,
+        raw_payload: body,
+      })
       .select()
       .single();
 
-    if (expErr) {
-      return new Response(JSON.stringify({ error: expErr.message }), {
+    if (pendErr) {
+      return new Response(JSON.stringify({ error: pendErr.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Fire push notification to all subscribed members
-    const cur = isForeign ? currency : defCur;
-    const formatted = new Intl.NumberFormat('en-AU', {
-      style: 'currency', currency: cur,
-      minimumFractionDigits: 2, maximumFractionDigits: 2,
-    }).format(totalAmount);
+    // Fire push notification so the user sees the prompt to confirm
+    const listRow = await supabase
+      .from('expense_lists')
+      .select('default_currency, name')
+      .eq('id', list_id)
+      .single();
+    const defCur = listRow.data?.default_currency || 'AUD';
+    const cur = currency || defCur;
+    const formatted = (() => {
+      try {
+        return new Intl.NumberFormat('en-AU', {
+          style: 'currency', currency: cur,
+          minimumFractionDigits: 2, maximumFractionDigits: 2,
+        }).format(totalAmount);
+      } catch {
+        return `${cur} ${totalAmount.toFixed(2)}`;
+      }
+    })();
 
     await supabase.functions.invoke('send-push', {
       body: {
         list_id,
         sender_user_id: null,
-        title: `${item.trim()} added automatically`,
-        body: `${payer} paid ${formatted} — split equally`,
-        tag: 'webhook-expense',
+        title: `Confirm: ${item.trim()}`,
+        body: `${formatted} — tap to review and add`,
+        tag: 'pending-expense',
       },
     });
 
-    return new Response(JSON.stringify({ ok: true, expense_id: expense.id }), {
+    return new Response(JSON.stringify({ ok: true, pending_id: pending.id }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
