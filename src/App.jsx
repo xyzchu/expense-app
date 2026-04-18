@@ -1318,9 +1318,14 @@ export default function SplitEase() {
                       <div style={{fontSize:10,...s.upper,opacity:0.4}}>{ageLabel} · from bank</div>
                     </div>
                     <div style={{textAlign:'right',marginLeft:8}}>
-                      <div style={{fontSize:15,fontWeight:700,...s.tabnum}}>{fmt(parseFloat(p.amount), cur)}</div>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6}}>
+                        <span style={{fontSize:9,...s.upper,fontWeight:700,background:'#f0f0ea',padding:'2px 7px',borderRadius:9999}}>
+                          {CURR_FLAG[cur]||''} {cur}
+                        </span>
+                        <div style={{fontSize:15,fontWeight:700,...s.tabnum}}>{fmt(parseFloat(p.amount), cur)}</div>
+                      </div>
                       {p.currency && p.currency !== defCur && (
-                        <div style={{fontSize:9,...s.upper,opacity:0.4}}>→ {fmt(rates[p.currency]&&rates[defCur]?cvt(parseFloat(p.amount),p.currency,defCur,rates):parseFloat(p.amount), defCur)}</div>
+                        <div style={{fontSize:9,...s.upper,opacity:0.4,marginTop:3}}>→ {fmt(rates[p.currency]&&rates[defCur]?cvt(parseFloat(p.amount),p.currency,defCur,rates):parseFloat(p.amount), defCur)}</div>
                       )}
                     </div>
                   </div>
