@@ -325,6 +325,10 @@ export default function SplitEase() {
   const [webhookToken, setWebhookToken] = useState(null);
   const [webhookLoading, setWebhookLoading] = useState(false);
 
+  // ── Pending Expenses (from webhook) ──
+  const [pendingExpenses, setPendingExpenses] = useState([]);
+  const [pendingDrafts, setPendingDrafts] = useState({});
+
   // ── Settle State ──
   const [showSettle, setShowSettle] = useState(false);
   const [settleFrom, setSettleFrom] = useState('');
@@ -429,6 +433,26 @@ export default function SplitEase() {
 
   useEffect(() => { fetchRates(defCur); }, [defCur]);
 
+  /* ── Realtime: pending expenses ── */
+  useEffect(() => {
+    if (!currentList || !user) return;
+    const channel = sb
+      .channel(`pending-${currentList.id}-${user.id}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'pending_expenses', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          if (payload.new?.list_id !== currentList.id) return;
+          setPendingExpenses(prev => [payload.new, ...prev.filter(p => p.id !== payload.new.id)]);
+        })
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'pending_expenses', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          setPendingExpenses(prev => prev.filter(p => p.id !== payload.old.id));
+        })
+      .subscribe();
+    return () => { sb.removeChannel(channel); };
+  }, [currentList, user]);
+
   /* ── Select a List ── */
   const selectList = useCallback(async (list) => {
     setCurrentList(list);
@@ -451,6 +475,8 @@ export default function SplitEase() {
     }
     const {data: wt} = await sb.from('webhook_tokens').select('secret').eq('list_id', list.id).eq('user_id', (await sb.auth.getUser()).data.user?.id).maybeSingle();
     setWebhookToken(wt?.secret || null);
+    const {data: pend} = await sb.from('pending_expenses').select('*').eq('list_id', list.id).order('created_at',{ascending:false});
+    setPendingExpenses(pend || []);
   }, [fetchRates]);
 
   /* ── Save Setting ── */
@@ -655,6 +681,54 @@ export default function SplitEase() {
     const next = recurringTemplates.filter(x => (x.text || x) !== tText);
     setRecurringTemplates(next);
     saveSetting('recurringTemplates', next);
+  };
+
+  /* ── Confirm / Dismiss Pending (from webhook) ── */
+  const confirmPending = async (pending, draft) => {
+    if (!currentList) return;
+    const names = members.map(m => m.display_name);
+    if (names.length === 0) { showToast('No members in list'); return; }
+    const payer = draft.paid_by || pending.paid_by || myName || names[0];
+    const category = draft.category || 'Other';
+    const splitType = draft.split_type || 'equal';
+    const amt = parseFloat(pending.amount);
+    const isForeign = pending.currency && pending.currency !== defCur;
+    const total = isForeign && rates[pending.currency] && rates[defCur]
+      ? Math.round(cvt(amt, pending.currency, defCur, rates) * 100) / 100
+      : amt;
+
+    const shares = {};
+    if (splitType === 'personal') {
+      shares[payer] = total;
+    } else {
+      names.forEach(n => { shares[n] = Math.round(total / names.length * 100) / 100; });
+    }
+
+    const row = {
+      list_id: currentList.id,
+      item: pending.item,
+      category,
+      date: new Date().toISOString().slice(0, 10),
+      total_amount: total,
+      paid_by: payer,
+      split_type: splitType,
+      shares,
+      original_currency: isForeign ? pending.currency : null,
+      original_amount: isForeign ? amt : null,
+    };
+
+    const { data, error } = await sb.from('expenses').insert(row).select().single();
+    if (error) { showToast('Error: ' + error.message); return; }
+    await sb.from('pending_expenses').delete().eq('id', pending.id);
+    setExpenses(prev => [data, ...prev]);
+    setPendingExpenses(prev => prev.filter(p => p.id !== pending.id));
+    showToast('Added: ' + data.item);
+  };
+
+  const dismissPending = async (id) => {
+    await sb.from('pending_expenses').delete().eq('id', id);
+    setPendingExpenses(prev => prev.filter(p => p.id !== id));
+    showToast('Dismissed');
   };
 
   /* ── Delete Expense ── */
@@ -1216,6 +1290,92 @@ export default function SplitEase() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Pending Expenses (from webhook) */}
+      <AnimatePresence>
+        {pendingExpenses.length > 0 && (
+          <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
+            style={{margin:'12px 16px 0'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,padding:'0 4px'}}>
+              <span style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.6}}>
+                Awaiting confirmation · {pendingExpenses.length}
+              </span>
+            </div>
+            {pendingExpenses.map(p => {
+              const draft = pendingDrafts[p.id] || {};
+              const category = draft.category || 'Other';
+              const payer = draft.paid_by || p.paid_by || myName || names[0] || '';
+              const splitType = draft.split_type || (p.split === 0 ? 'personal' : 'equal');
+              const cur = p.currency || defCur;
+              const ageMin = Math.max(0, Math.round((Date.now() - new Date(p.created_at).getTime()) / 60000));
+              const ageLabel = ageMin < 1 ? 'just now' : ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin/60)}h ago`;
+              return (
+                <motion.div key={p.id} layout initial={{opacity:0,scale:0.97}} animate={{opacity:1,scale:1}} exit={{opacity:0,scale:0.97}}
+                  style={{...s.card,marginBottom:10,padding:14,border:'2px dashed #d4b84e',background:'#fffdf3'}}>
+                  <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,...s.upper,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.item}</div>
+                      <div style={{fontSize:10,...s.upper,opacity:0.4}}>{ageLabel} · from bank</div>
+                    </div>
+                    <div style={{textAlign:'right',marginLeft:8}}>
+                      <div style={{fontSize:15,fontWeight:700,...s.tabnum}}>{fmt(parseFloat(p.amount), cur)}</div>
+                      {p.currency && p.currency !== defCur && (
+                        <div style={{fontSize:9,...s.upper,opacity:0.4}}>→ {fmt(rates[p.currency]&&rates[defCur]?cvt(parseFloat(p.amount),p.currency,defCur,rates):parseFloat(p.amount), defCur)}</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{marginBottom:8}}>
+                    <div style={{...s.label,marginBottom:4}}>Category</div>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      {allCatNames.map(c => {
+                        const meta = BASE_CATS[c] || customCats[c] || {emoji:'🏷️'};
+                        return (
+                          <button key={c} onClick={()=>setPendingDrafts(prev=>({...prev,[p.id]:{...prev[p.id],category:c}}))}
+                            style={{...s.split(category===c),display:'inline-flex',alignItems:'center',gap:3}}>
+                            <span>{meta.emoji}</span>{c}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={{marginBottom:8}}>
+                    <div style={{...s.label,marginBottom:4}}>Paid by</div>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      {names.map(n => (
+                        <button key={n} onClick={()=>setPendingDrafts(prev=>({...prev,[p.id]:{...prev[p.id],paid_by:n}}))}
+                          style={s.split(payer===n)}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{marginBottom:12}}>
+                    <div style={{...s.label,marginBottom:4}}>Split</div>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      <button onClick={()=>setPendingDrafts(prev=>({...prev,[p.id]:{...prev[p.id],split_type:'equal'}}))}
+                        style={s.split(splitType==='equal')}>Equal</button>
+                      <button onClick={()=>setPendingDrafts(prev=>({...prev,[p.id]:{...prev[p.id],split_type:'personal'}}))}
+                        style={s.split(splitType==='personal')}>Personal</button>
+                    </div>
+                  </div>
+
+                  <div style={{display:'flex',gap:8}}>
+                    <button onClick={()=>confirmPending(p,{category,paid_by:payer,split_type:splitType})}
+                      style={{...s.btnDark,flex:1,padding:'10px'}}>
+                      <Check size={14} style={{verticalAlign:'middle',marginRight:4}}/>Confirm
+                    </button>
+                    <button onClick={()=>dismissPending(p.id)}
+                      style={{...s.btnOutline,width:'auto',padding:'10px 14px',borderColor:'#bbb'}}>
+                      <Trash2 size={14}/>
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Manual Add Form */}
       <AnimatePresence>
