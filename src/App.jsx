@@ -217,7 +217,7 @@ const s = {
   page: { minHeight:'100vh', background:'#FAFAF5', color:'#1a1a1a', fontFamily:MONO, WebkitFontSmoothing:'antialiased' },
   centerPage: { minHeight:'100vh', background:'#FAFAF5', display:'flex', alignItems:'center', justifyContent:'center', padding:16, fontFamily:MONO, color:'#1a1a1a' },
   card: { background:'#fff', borderRadius:16, boxShadow:'0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)', padding:'24px' },
-  input: { width:'100%', background:'#F0F0EA', border:'none', borderRadius:12, padding:'12px 14px', fontSize: 14, color:'#1a1a1a', outline:'none', letterSpacing:'0.04em', fontFamily:MONO },
+  input: { width:'100%', background:'#F0F0EA', border:'none', borderRadius:12, padding:'12px 14px', fontSize: 16, color:'#1a1a1a', outline:'none', letterSpacing:'0.04em', fontFamily:MONO },
   inputFocus: { background:'#e8e8df' },
   label: { fontSize:10, letterSpacing:'0.12em', textTransform:'uppercase', opacity:0.35, fontWeight:700, marginBottom:6, display:'block' },
   btnDark: { width:'100%', padding:'14px', border:'2px solid #222', background:'#222', color:'#f5f5ee', fontSize: 14, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
@@ -1583,19 +1583,19 @@ const HomeTab = () => (
               <div style={{background:'#f3f4f6',borderRadius:12,padding:12,marginTop:10}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
                   <select value={settleFrom} onChange={e=>setSettleFrom(e.target.value)}
-                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.upper}}>
+                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:16,outline:'none',...s.upper}}>
                     {names.map(n=><option key={n} value={n}>{n}</option>)}
                   </select>
                   <span style={{fontSize:10,...s.upper,opacity:0.4}}>paid</span>
                   <select value={settleTo} onChange={e=>setSettleTo(e.target.value)}
-                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.upper}}>
+                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:16,outline:'none',...s.upper}}>
                     {names.filter(n=>n!==settleFrom).map(n=><option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
                 <div style={{display:'flex',gap:6}}>
                   <input type="number" placeholder="0.00" value={settleAmt} onChange={e=>setSettleAmt(e.target.value)}
                     onKeyDown={e=>{if(e.key==='Enter')addSettlement();}}
-                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.tabnum}}/>
+                    style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:16,outline:'none',...s.tabnum}}/>
                   <button onClick={addSettlement}
                     style={{fontFamily:MONO,fontSize: 12,...s.upper,fontWeight:700,background:'#1a1a1a',color:'#fff',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
                     Record
@@ -1927,7 +1927,7 @@ const HomeTab = () => (
           <input ref={inputRef} placeholder="Add expense… e.g. 'dinner ¥500 Sam paid'" value={inputText}
             onChange={e=>{setInputText(e.target.value);setPreviewCatOverride(null);}} onFocus={()=>setInputFocused(true)}
             onKeyDown={e=>{if(e.key==='Enter'&&parsedPreview)addExpense();}}
-            style={{flex:1,fontSize:12,outline:'none',background:'transparent',border:'none',fontFamily:MONO,color:'#1a1a1a',letterSpacing:'0.04em'}}/>
+            style={{flex:1,fontSize:16,outline:'none',background:'transparent',border:'none',fontFamily:MONO,color:'#1a1a1a',letterSpacing:'0.04em'}}/>
           {inputText && <button onClick={()=>{setInputText('');setInputFocused(false);setPreviewCatOverride(null);}} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3}}><X size={16}/></button>}
           {parsedPreview && <button onClick={addExpense} style={{background:'#222',color:'#f5f5ee',border:'none',width:32,height:32,borderRadius:12,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><Send size={14}/></button>}
         </div>
@@ -2476,7 +2476,7 @@ const HomeTab = () => (
             <div style={{flex:1,minWidth:0}}>
               {m.user_id === user.id && nameEditing ? (
                 <div style={{display:'flex',gap:4}}>
-                  <input value={editName} onChange={e=>setEditName(e.target.value)} style={{...s.input,flex:1,padding:'6px 10px',fontSize:12}}/>
+                  <input value={editName} onChange={e=>setEditName(e.target.value)} style={{...s.input,flex:1,padding:'6px 10px',fontSize:16}}/>
                   <button onClick={()=>{updateMyName(editName);setNameEditing(false);showToast('Name updated');}} style={{background:'none',border:'none',cursor:'pointer',color:'#15803d'}}><Check size={16}/></button>
                   <button onClick={()=>setNameEditing(false)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.4}}><X size={16}/></button>
                 </div>
@@ -2554,7 +2554,7 @@ const HomeTab = () => (
                     onChange={e=>setOverrideDrafts(prev => ({ ...prev, [w]: e.target.value }))}
                     onBlur={()=>renameCategorySuggestion(w)}
                     onKeyDown={e=>{ if (e.key === 'Enter') renameCategorySuggestion(w); }}
-                    style={{...s.input, padding:'8px 10px', fontSize: 12, background:'#fff', wordBreak:'break-word'}}
+                    style={{...s.input, padding:'8px 10px', fontSize: 16, background:'#fff', wordBreak:'break-word'}}
                   />
                   <select
                     value={suggestion.category}
@@ -2598,7 +2598,7 @@ const HomeTab = () => (
                     onChange={e=>setOverrideDrafts(prev => ({ ...prev, [w]: e.target.value }))}
                     onBlur={()=>renameCatOverride(w)}
                     onKeyDown={e=>{ if (e.key === 'Enter') renameCatOverride(w); }}
-                    style={{...s.input, padding:'8px 10px', fontSize: 12, background:'#fff', wordBreak:'break-word'}}
+                    style={{...s.input, padding:'8px 10px', fontSize: 16, background:'#fff', wordBreak:'break-word'}}
                   />
                   <select
                     value={c}
