@@ -31,12 +31,19 @@ const inputBase = {
 };
 
 export default function LiquorlandTab() {
-  const [values, setValues] = useState(() =>
-    Object.fromEntries(ITEMS.filter(i => !i.section).map(i => [i.id, '']))
-  );
-  const [visitDate, setVisitDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [values, setValues] = useState(() => {
+    try { const s = localStorage.getItem('liquorland_values'); if (s) return JSON.parse(s); } catch {}
+    return Object.fromEntries(ITEMS.filter(i => !i.section).map(i => [i.id, '']));
+  });
+  const [visitDate, setVisitDate] = useState(() => {
+    return localStorage.getItem('liquorland_date') || new Date().toISOString().slice(0, 10);
+  });
 
-  const set = (id, val) => setValues(v => ({ ...v, [id]: val }));
+  const set = (id, val) => setValues(v => {
+    const next = { ...v, [id]: val };
+    try { localStorage.setItem('liquorland_values', JSON.stringify(next)); } catch {}
+    return next;
+  });
 
   const exportTxt = () => {
     const lines = [
@@ -74,7 +81,7 @@ export default function LiquorlandTab() {
 
       <div style={{ padding: '0 16px 16px' }}>
         <label style={sq({ fontSize: 10, textTransform: 'uppercase', opacity: 0.4, display: 'block', marginBottom: 4 })}>Visit Date</label>
-        <input type="date" value={visitDate} onChange={e => setVisitDate(e.target.value)}
+        <input type="date" value={visitDate} onChange={e => { setVisitDate(e.target.value); localStorage.setItem('liquorland_date', e.target.value); }}
           style={{ ...inputBase, width: 'auto' }} />
       </div>
 
