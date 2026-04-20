@@ -6,7 +6,7 @@ import {
   Search, Pencil, Trash2, X, Send, LogOut, Plus, Users, Check, Copy,
   Upload, Download, UserPlus, Home as HomeIcon, BarChart3,
   Settings as SettingsIcon, ChevronDown, ChevronUp, ArrowRight,
-  RefreshCw, Eye, EyeOff, TrendingUp, Receipt
+  RefreshCw, Eye, EyeOff, TrendingUp
 } from 'lucide-react';
 import {
   XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
@@ -15,18 +15,24 @@ import {
 import sb from './supabaseClient';
 import FinancesTab from './FinancesTab';
 import TransactionsTab from './TransactionsTab';
+import SecuritiesStatisticsTab from './SecuritiesStatisticsTab';
+import GrilldTab from './GrilldTab';
 import { usePushNotifications } from './usePushNotifications';
 
 /* ══════════════════════════════════════════════════════════════
    THEME
    ══════════════════════════════════════════════════════════════ */
 
-const MONO = '"SF Mono","Fira Code","Cascadia Code","Consolas","Liberation Mono",monospace';
+const MONO = '"IBM Plex Mono", monospace';
+const APP_OWNER_EMAIL = 'xyzchu@hotmail.com';
 
 const THEME_CSS = `
   .se * { box-sizing: border-box; }
   .se, .se input, .se select, .se button, .se textarea, .se code {
     font-family: ${MONO};
+  }
+  .se, .se * {
+    font-weight: 400 !important;
   }
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -77,6 +83,30 @@ const CAT_KW = {
 const CUST_COLORS = ['#06b6d4','#f43f5e','#8b5cf6','#14b8a6','#f59e0b','#6366f1','#10b981','#e11d48'];
 const PERSON_COLORS = ['#3b82f6','#ec4899','#f59e0b','#22c55e','#a855f7','#06b6d4','#ef4444','#84cc16'];
 const STOP = new Set('the and for from with this that have been were they them their what when where which who will would could should about into over after before between under through during each just also than very some only other most paid owes owed split share'.split(' '));
+const PAYMENT_PREFIXES = [
+  /^sq\s*\*+\s*/i,
+  /^sq\s+/i,
+  /^tst\*+\s*/i,
+  /^paypal\s*\*+\s*/i,
+  /^pp\*+\s*/i,
+  /^uber\s*\*+\s*/i,
+  /^google\s*\*+\s*/i,
+  /^apple\.com\/bill\s*/i,
+];
+const KNOWN_MERCHANT_PATTERNS = [
+  { pattern: /\bbunnings(?:\s+warehouse)?\b/i, canonical: 'bunnings' },
+  { pattern: /\bwoolworths(?:\s+metro)?\b/i, canonical: 'woolworths' },
+  { pattern: /\bcoles\b/i, canonical: 'coles' },
+  { pattern: /\baldi\b/i, canonical: 'aldi' },
+  { pattern: /\bcostco\b/i, canonical: 'costco' },
+  { pattern: /\bkmart\b/i, canonical: 'kmart' },
+  { pattern: /\btarget\b/i, canonical: 'target' },
+  { pattern: /\bofficeworks\b/i, canonical: 'officeworks' },
+  { pattern: /\bikea\b/i, canonical: 'ikea' },
+  { pattern: /\bbp\b/i, canonical: 'bp' },
+  { pattern: /\bshell\b/i, canonical: 'shell' },
+  { pattern: /\b7\s*eleven\b/i, canonical: '7 eleven' },
+];
 
 /* ══════════════════════════════════════════════════════════════
    UTILITY FUNCTIONS
@@ -92,6 +122,53 @@ const today = () => new Date().toISOString().slice(0,10);
 
 const sigWords = (text) =>
   text.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !STOP.has(w));
+
+const stripPaymentPrefixes = (text) => {
+  let cleaned = text.trim();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const re of PAYMENT_PREFIXES) {
+      if (re.test(cleaned)) {
+        cleaned = cleaned.replace(re, '').trim();
+        changed = true;
+      }
+    }
+  }
+  return cleaned;
+};
+
+const normalizeMerchantText = (text) => {
+  let cleaned = stripPaymentPrefixes(String(text || ''));
+  cleaned = cleaned
+    .replace(/[0-9]{3,}/g, ' ')
+    .replace(/[#*]/g, ' ')
+    .replace(/\b(?:pty|ltd|australia|au)\b/gi, ' ')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  for (const { pattern, canonical } of KNOWN_MERCHANT_PATTERNS) {
+    if (pattern.test(cleaned)) return canonical;
+  }
+  return cleaned;
+};
+
+const deriveOverrideKeys = (text) => {
+  const normalized = normalizeMerchantText(text);
+  const keys = [];
+  if (normalized) keys.push(normalized);
+  for (const word of sigWords(normalized)) {
+    if (!keys.includes(word)) keys.push(word);
+  }
+  return keys;
+};
+
+const prettifyMerchantText = (text) => {
+  const normalized = normalizeMerchantText(text);
+  if (!normalized) return '';
+  return normalized.replace(/\b\w/g, (ch) => ch.toUpperCase());
+};
 
 const cvt = (amount, from, to, rates) => {
   if (from === to || !from || !to) return amount;
@@ -119,11 +196,11 @@ const simplifyDebts = (nets) => {
 };
 
 const detectCategory = (text, overrides, customCats) => {
-  const lo = text.toLowerCase().trim();
-  if (overrides[lo]) return overrides[lo];
-  const sw = sigWords(text);
+  const normalized = normalizeMerchantText(text);
+  if (overrides[normalized]) return overrides[normalized];
+  const sw = sigWords(normalized);
   for (const w of sw) { if (overrides[w]) return overrides[w]; }
-  for (const [cat, re] of Object.entries(CAT_KW)) { if (re.test(text)) return cat; }
+  for (const [cat, re] of Object.entries(CAT_KW)) { if (re.test(normalized)) return cat; }
   return 'Restaurant';
 };
 
@@ -140,19 +217,20 @@ const s = {
   page: { minHeight:'100vh', background:'#FAFAF5', color:'#1a1a1a', fontFamily:MONO, WebkitFontSmoothing:'antialiased' },
   centerPage: { minHeight:'100vh', background:'#FAFAF5', display:'flex', alignItems:'center', justifyContent:'center', padding:16, fontFamily:MONO, color:'#1a1a1a' },
   card: { background:'#fff', borderRadius:16, boxShadow:'0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)', padding:'24px' },
-  input: { width:'100%', background:'#F0F0EA', border:'none', borderRadius:12, padding:'12px 14px', fontSize:13, color:'#1a1a1a', outline:'none', letterSpacing:'0.04em', fontFamily:MONO },
+  input: { width:'100%', background:'#F0F0EA', border:'none', borderRadius:12, padding:'12px 14px', fontSize: 14, color:'#1a1a1a', outline:'none', letterSpacing:'0.04em', fontFamily:MONO },
   inputFocus: { background:'#e8e8df' },
   label: { fontSize:10, letterSpacing:'0.12em', textTransform:'uppercase', opacity:0.35, fontWeight:700, marginBottom:6, display:'block' },
-  btnDark: { width:'100%', padding:'14px', border:'2px solid #222', background:'#222', color:'#f5f5ee', fontSize:13, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
-  btnOutline: { width:'100%', padding:'14px', border:'2px solid #bbb', background:'transparent', color:'#1a1a1a', fontSize:13, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
-  ghost: { background:'none', border:'none', fontSize:11, letterSpacing:'0.1em', textTransform:'uppercase', opacity:0.35, cursor:'pointer', padding:'8px 0', color:'#1a1a1a', fontFamily:MONO },
+  btnDark: { width:'100%', padding:'14px', border:'2px solid #222', background:'#222', color:'#f5f5ee', fontSize: 14, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
+  btnOutline: { width:'100%', padding:'14px', border:'2px solid #bbb', background:'transparent', color:'#1a1a1a', fontSize: 14, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
+  ghost: { background:'none', border:'none', fontSize: 12, letterSpacing:'0.1em', textTransform:'uppercase', opacity:0.35, cursor:'pointer', padding:'8px 0', color:'#1a1a1a', fontFamily:MONO },
   tag: (bg,tx) => ({ fontSize:10, letterSpacing:'0.06em', textTransform:'uppercase', padding:'3px 8px', borderRadius:9999, fontWeight:600, display:'inline-block', background:bg||'#f3f4f6', color:tx||'#4b5563' }),
-  chip: (active) => ({ fontSize:11, letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 14px', borderRadius:9999, border:'none', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, fontWeight: active?700:400, background: active?'#222':'#F0F0EA', color: active?'#f5f5ee':'#1a1a1a', opacity: active?1:0.6 }),
-  sm: (active) => ({ fontSize:11, letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 14px', borderRadius:12, border:'none', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, background: active?'#222':'#F0F0EA', color: active?'#f5f5ee':'#1a1a1a', fontWeight: active?700:400 }),
+  chip: (active) => ({ fontSize: 12, letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 14px', borderRadius:9999, border:'none', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, fontWeight: active?700:400, background: active?'#222':'#F0F0EA', color: active?'#f5f5ee':'#1a1a1a', opacity: active?1:0.6 }),
+  sm: (active) => ({ fontSize: 12, letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 14px', borderRadius:12, border:'none', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, background: active?'#222':'#F0F0EA', color: active?'#f5f5ee':'#1a1a1a', fontWeight: active?700:400 }),
   split: (active) => ({ fontSize:10, letterSpacing:'0.06em', textTransform:'uppercase', padding:'6px 10px', borderRadius:12, border: active?'1px solid #222':'1px solid #ddd', background: active?'#222':'#fff', color: active?'#f5f5ee':'#1a1a1a', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, fontWeight: active?700:400 }),
   tabnum: { fontVariantNumeric:'tabular-nums' },
   upper: { textTransform:'uppercase', letterSpacing:'0.08em' },
 };
+const SHELL_HEADING_STYLE = { ...s.label, fontSize: 14, color: '#1a1a1a', marginBottom: 8 };
 
 /* ══════════════════════════════════════════════════════════════
    NLP PARSER
@@ -160,6 +238,7 @@ const s = {
 
 function parseExpense(raw, members, myName, rates, defCur, overrides, customCats) {
   if (!raw.trim()) return null;
+  const isRefund = /\b(refund|refunded|return|returned|reimburs(?:e|ed|ement)|cashback|cash\s+back|rebate)\b/i.test(raw);
   let t = raw, cur = null, amt = null;
 
   const sm = t.match(/([¥€£₩₹฿])\s*(\d+(?:\.\d+)?)/);
@@ -189,8 +268,8 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
   if (amt==null) { const m=t.match(/\b(\d+(?:\.\d+)?)\b/); if(m){amt=parseFloat(m[1]);t=t.replace(m[0],' ');} }
   if (amt==null) return null;
 
-  const origCur = cur || defCur, origAmt = amt;
-  const total = cur && cur !== defCur ? cvt(origAmt, cur, defCur, rates) : amt;
+  const origCur = cur || defCur, origAmt = isRefund ? -Math.abs(amt) : amt;
+  const total = (cur && cur !== defCur ? cvt(Math.abs(amt), cur, defCur, rates) : Math.abs(amt)) * (isRefund ? -1 : 1);
   if (!cur) cur = defCur;
 
   let paidBy = myName;
@@ -202,11 +281,12 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
   let st = raw;
   for (const n of names) st = st.replace(new RegExp(`\\b${n}\\s+paid\\b|\\bpaid\\s+by\\s+${n}\\b`,'ig'),' ');
 
-  let splitType = 'equal', shares = {};
+  let splitType = 'equal', shares = {}, headcount = null;
   const personalRe = /\b(for\s+myself|for\s+me|mine\s+only|personal|just\s+me|no\s+split|my\s+own|only\s+me|myself)\b/i;
   const personalShort = /(?:^|\s)(me|own)(?:\s|$)/i;
   const ratioMatch = st.match(/\b(\d+(?:\/\d+)+)\b/);
   const pctMatch = st.match(/\b(\d+)\s*%\s*(\w+)/i);
+  const headcountMatch = st.match(/\bfor\s+(\d+)\s+(?:people|persons?|ppl|guests?|friends?|heads?)\b|\b(\d+)\s+(?:people|persons?|ppl|guests?)\b|\bsplit\s+(\d+)\s*ways?\b/i);
 
   let fullPerson = null;
   for (const n of names) {
@@ -219,6 +299,17 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
     splitType = 'personal'; shares = {[paidBy]: total};
   } else if (fullPerson) {
     splitType = 'full'; shares = {[fullPerson]: total};
+  } else if (headcountMatch) {
+    headcount = parseInt(headcountMatch[1] || headcountMatch[2] || headcountMatch[3]);
+    if (headcount >= 2 && headcount > names.length) {
+      splitType = 'headcount';
+      const perPerson = total / headcount;
+      names.forEach(n => { shares[n] = perPerson; });
+    } else {
+      splitType = 'equal';
+      names.forEach(n => { shares[n] = total / names.length; });
+      headcount = null;
+    }
   } else if (ratioMatch) {
     splitType = 'custom';
     const parts = ratioMatch[1].split('/').map(Number);
@@ -252,8 +343,12 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
   item = item.replace(/\b(me|own)\b/gi,' ');
   item = item.replace(/\b\d+\s*%\s*\w+/gi,' ');
   item = item.replace(/\b\d+(?:\/\d+)+\b/g,' ');
+  item = item.replace(/\bfor\s+\d+\s+(?:people|persons?|ppl|guests?|friends?|heads?)\b/gi,' ');
+  item = item.replace(/\b\d+\s+(?:people|persons?|ppl|guests?)\b/gi,' ');
+  item = item.replace(/\bsplit\s+\d+\s*ways?\b/gi,' ');
   for (const [re] of CURR_WORDS) item = item.replace(re,' ');
   item = item.replace(/\s+/g,' ').trim();
+  item = prettifyMerchantText(item) || item;
   if (!item) item = 'Expense';
 
   const category = detectCategory(item, overrides, customCats);
@@ -264,7 +359,8 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
     original_amount: origCur !== defCur ? origAmt : null,
     total_amount: Math.round(total * 100) / 100,
     paid_by: paidBy, split_type: splitType,
-    shares: Object.fromEntries(Object.entries(shares).map(([k,v])=>[k,Math.round(v*100)/100]))
+    shares: Object.fromEntries(Object.entries(shares).map(([k,v])=>[k,Math.round(v*100)/100])),
+    headcount: headcount ?? null,
   };
 }
 
@@ -282,6 +378,9 @@ export default function SplitEase() {
   const [showPass, setShowPass] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [setPasswordMode, setSetPasswordMode] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordBusy, setNewPasswordBusy] = useState(false);
 
   // ── List State ──
   const [lists, setLists] = useState([]);
@@ -297,6 +396,10 @@ export default function SplitEase() {
 
   // ── App State ──
   const [tab, setTab] = useState('home');
+  const [investingView, setInvestingView] = useState('portfolio');
+  const [investingPortfolioView, setInvestingPortfolioView] = useState('summary');
+  const [investingSecuritiesView, setInvestingSecuritiesView] = useState('pnl');
+  const [investingToolsView, setInvestingToolsView] = useState('portfolio');
   const [expenses, setExpenses] = useState([]);
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -310,6 +413,7 @@ export default function SplitEase() {
 
   // ── Settings State ──
   const [catOverrides, setCatOverrides] = useState({});
+  const [catSuggestions, setCatSuggestions] = useState({});
   const [customCats, setCustomCats] = useState({});
   const [defCur, setDefCur] = useState('AUD');
   const [newCatName, setNewCatName] = useState('');
@@ -324,6 +428,7 @@ export default function SplitEase() {
   const [nameEditing, setNameEditing] = useState(false);
   const [webhookToken, setWebhookToken] = useState(null);
   const [webhookLoading, setWebhookLoading] = useState(false);
+  const [overrideDrafts, setOverrideDrafts] = useState({});
 
   // ── Pending Expenses (from webhook) ──
   const [pendingExpenses, setPendingExpenses] = useState([]);
@@ -346,6 +451,8 @@ export default function SplitEase() {
   const [addExactAmounts, setAddExactAmounts] = useState({});
   const [addProportions, setAddProportions] = useState({});
   const [addPercentages, setAddPercentages] = useState({});
+  const [addHeadcount, setAddHeadcount] = useState('');
+  const [addHeadcountMembers, setAddHeadcountMembers] = useState({});
   const [addOrigCur, setAddOrigCur] = useState('');
   const [addOrigAmt, setAddOrigAmt] = useState('');
   const [showForeign, setShowForeign] = useState(false);
@@ -370,9 +477,11 @@ export default function SplitEase() {
   const { supported: pushSupported, permission: pushPermission, subscribed: pushSubscribed,
           loading: pushLoading, subscribe: pushSubscribe, unsubscribe: pushUnsubscribe,
           sendNotification } = usePushNotifications(user, currentList, showToast);
+  const isAppOwner = user?.email === APP_OWNER_EMAIL;
 
   /* ── Auth Effects ── */
   useEffect(() => {
+    if (window.location.hash.includes('type=invite') || window.location.hash.includes('type=recovery')) setSetPasswordMode(true);
     sb.auth.getSession().then(({data:{session}}) => {
       setUser(session?.user || null);
       setAuthLoading(false);
@@ -382,6 +491,10 @@ export default function SplitEase() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!isAppOwner && tab === 'investing') setTab('home');
+  }, [isAppOwner, tab]);
 
   /* ── Fetch Lists ── */
   useEffect(() => {
@@ -465,14 +578,14 @@ export default function SplitEase() {
     const {data: exps} = await sb.from('expenses').select('*').eq('list_id', list.id).order('date',{ascending:false}).order('created_at',{ascending:false});
     setExpenses(exps || []);
     const {data: sets} = await sb.from('list_settings').select('*').eq('list_id', list.id);
-    if (sets) {
-      const ov = sets.find(s=>s.key==='categoryOverrides');
-      const cc = sets.find(s=>s.key==='customCats');
-      const rt = sets.find(s=>s.key==='recurringTemplates');
-      if (ov) setCatOverrides(ov.value || {});
-      if (cc) setCustomCats(cc.value || {});
-      if (rt) setRecurringTemplates(rt.value || []);
-    }
+    const ov = sets?.find(s=>s.key==='categoryOverrides');
+    const sg = sets?.find(s=>s.key==='categorySuggestions');
+    const cc = sets?.find(s=>s.key==='customCats');
+    const rt = sets?.find(s=>s.key==='recurringTemplates');
+    setCatOverrides(ov?.value || {});
+    setCatSuggestions(sg?.value || {});
+    setCustomCats(cc?.value || {});
+    setRecurringTemplates(rt?.value || []);
     const {data: wt} = await sb.from('webhook_tokens').select('secret').eq('list_id', list.id).eq('user_id', (await sb.auth.getUser()).data.user?.id).maybeSingle();
     setWebhookToken(wt?.secret || null);
     const {data: pend} = await sb.from('pending_expenses').select('*').eq('list_id', list.id).order('created_at',{ascending:false});
@@ -501,17 +614,25 @@ export default function SplitEase() {
     setAuthBusy(false);
   };
 
+  const handleSetPassword = async () => {
+    if (newPassword.length < 6) { showToast('Password must be at least 6 characters'); return; }
+    setNewPasswordBusy(true);
+    const {error} = await sb.auth.updateUser({password: newPassword});
+    setNewPasswordBusy(false);
+    if (error) { showToast('Error: ' + error.message); return; }
+    setSetPasswordMode(false);
+    window.history.replaceState(null, '', window.location.pathname);
+    showToast('Password set — welcome!');
+  };
+
   /* ── Create List ── */
   const handleCreateList = async () => {
     if (!newListName.trim() || !newDisplayName.trim()) return;
-    const {data: list, error} = await sb.from('expense_lists').insert({
-      name: newListName.trim(), default_currency: newListCur, created_by: user.id
-    }).select().single();
-    if (error) { showToast('Error: ' + error.message); return; }
-    await sb.from('list_members').insert({
-      list_id: list.id, user_id: user.id,
-      display_name: newDisplayName.trim(), email: user.email
+    const {data: listJson, error} = await sb.rpc('create_expense_list', {
+      p_name: newListName.trim(), p_currency: newListCur, p_display_name: newDisplayName.trim()
     });
+    if (error) { showToast('Error: ' + error.message); return; }
+    const list = listJson;
 
     const name = newDisplayName.trim();
     const d = (daysAgo) => {
@@ -540,10 +661,14 @@ export default function SplitEase() {
   /* ── Delete List ── */
   const deleteList = async () => {
     if (!currentList) return;
-    await sb.from('expenses').delete().eq('list_id', currentList.id);
-    await sb.from('list_settings').delete().eq('list_id', currentList.id);
-    await sb.from('list_members').delete().eq('list_id', currentList.id);
-    await sb.from('expense_lists').delete().eq('id', currentList.id);
+    const { error: expError } = await sb.from('expenses').delete().eq('list_id', currentList.id);
+    if (expError) { showToast('Error deleting expenses: ' + expError.message); return; }
+    const { error: setError } = await sb.from('list_settings').delete().eq('list_id', currentList.id);
+    if (setError) { showToast('Error deleting list settings: ' + setError.message); return; }
+    const { error: memError } = await sb.from('list_members').delete().eq('list_id', currentList.id);
+    if (memError) { showToast('Error deleting list members: ' + memError.message); return; }
+    const { error: listError } = await sb.from('expense_lists').delete().eq('id', currentList.id);
+    if (listError) { showToast('Error deleting list: ' + listError.message); return; }
     setLists(prev => prev.filter(l => l.id !== currentList.id));
     setCurrentList(null);
     localStorage.removeItem('splitease_list');
@@ -555,16 +680,14 @@ export default function SplitEase() {
   /* ── Join List ── */
   const handleJoinList = async () => {
     if (!joinCode.trim() || !newDisplayName.trim()) return;
-    const {data: list} = await sb.from('expense_lists').select('*').eq('invite_code', joinCode.trim().toLowerCase()).single();
-    if (!list) { showToast('Invalid invite code'); return; }
-    const {data: existing} = await sb.from('list_members').select('id').eq('list_id',list.id).eq('user_id',user.id);
-    if (existing && existing.length > 0) { showToast('Already a member!'); selectList({...list, myDisplayName: newDisplayName.trim()}); return; }
-    await sb.from('list_members').insert({
-      list_id: list.id, user_id: user.id,
-      display_name: newDisplayName.trim(), email: user.email
+    const { data: list, error } = await sb.rpc('join_expense_list_by_invite_code', {
+      p_invite_code: joinCode.trim().toLowerCase(),
+      p_display_name: newDisplayName.trim(),
+      p_email: user.email,
     });
+    if (error || !list) { showToast(error?.message || 'Invalid invite code'); return; }
     const full = {...list, myDisplayName: newDisplayName.trim()};
-    setLists(prev => [...prev, full]);
+    setLists(prev => [...prev.filter(l => l.id !== full.id), full]);
     selectList(full);
     setListScreen('select');
     setJoinCode(''); setNewDisplayName('');
@@ -614,7 +737,16 @@ export default function SplitEase() {
       ns.forEach(n => { const v = parseFloat(addExactAmounts[n]); if (v > 0) shares[n] = v; });
       const sum = Object.values(shares).reduce((a,b)=>a+b,0);
       if (Math.abs(sum - amount) > 0.01) { showToast('Exact amounts must equal total'); return; }
-    } else if (addSplitType === 'payer') { shares = {[payer]: amount}; }
+    } else if (addSplitType === 'payer') { shares = {[payer]: amount};
+    } else if (addSplitType === 'headcount') {
+      const hc = parseInt(addHeadcount) || 0;
+      if (hc < 2) { showToast('Enter total number of people (min 2)'); return; }
+      const selected = ns.filter(n => addHeadcountMembers[n] !== false);
+      if (selected.length === 0) { showToast('Select at least one member'); return; }
+      if (selected.length >= hc) { showToast(`In-app members must be fewer than total (${hc})`); return; }
+      const perPerson = amount / hc;
+      selected.forEach(n => { shares[n] = perPerson; });
+    }
     shares = Object.fromEntries(Object.entries(shares).map(([k,v])=>[k,Math.round(v*100)/100]));
 
     let origCur = null, origAmt = null;
@@ -623,7 +755,8 @@ export default function SplitEase() {
     const row = {
       list_id: currentList.id, item: addItem.trim(), category: addCategory, date: addDate,
       original_currency: origCur, original_amount: origAmt, total_amount: Math.round(amount * 100) / 100,
-      paid_by: payer, split_type: addSplitType, shares
+      paid_by: payer, split_type: addSplitType, shares,
+      headcount: addSplitType === 'headcount' ? (parseInt(addHeadcount) || null) : null,
     };
     const {data, error} = await sb.from('expenses').insert(row).select().single();
     if (error) { showToast('Error: ' + error.message); return; }
@@ -631,6 +764,7 @@ export default function SplitEase() {
     setShowAddForm(false);
     setAddItem(''); setAddAmount(''); setAddCategory('Other'); setAddSplitType('equal');
     setAddExactAmounts({}); setAddProportions({}); setAddPercentages({});
+    setAddHeadcount(''); setAddHeadcountMembers({});
     setAddOrigCur(''); setAddOrigAmt(''); setShowForeign(false);
     showToast('Added: ' + data.item);
     const shareNames1 = Object.keys(data.shares || {}).filter(n => (data.shares[n] || 0) > 0);
@@ -645,17 +779,10 @@ export default function SplitEase() {
     const {data, error} = await sb.from('expenses').insert(row).select().single();
     if (error) { showToast('Error: ' + error.message); return; }
     setExpenses(prev => [data, ...prev]);
-    // Learn category override if user changed it or if it's Income (not auto-detected)
     const finalCat = row.category;
     const autoCat = parsedPreview.category;
     if (previewCatOverride || finalCat === 'Income') {
-      const words = sigWords(inputText);
-      if (words.length) {
-        const newOv = {...catOverrides};
-        words.forEach(w => { newOv[w] = finalCat; });
-        setCatOverrides(newOv);
-        saveSetting('categoryOverrides', newOv);
-      }
+      queueCategorySuggestions(parsedPreview.item || inputText, finalCat, autoCat);
     }
     setInputText(''); setInputFocused(false); setPreviewCatOverride(null); setShowSaveTemplate(false);
     showToast('Added: ' + data.item);
@@ -750,6 +877,7 @@ export default function SplitEase() {
       original_currency: exp.original_currency || '',
       original_amount: exp.original_amount ?? '',
       exchange_rate: hasOrig ? parseFloat((exp.total_amount / exp.original_amount).toFixed(6)) : 1,
+      headcount: exp.headcount || '',
     });
   };
 
@@ -769,6 +897,14 @@ export default function SplitEase() {
       names.forEach(n => { const p = parseFloat(editForm.shares?.[n])||0; if(p>0) shares[n]=(p/100)*total; });
     } else if (editForm.split_type === 'personal') {
       shares = {[editForm.paid_by]: total};
+    } else if (editForm.split_type === 'headcount') {
+      const hc = parseInt(editForm.headcount) || 0;
+      if (hc >= 2) {
+        const perPerson = total / hc;
+        const selected = Object.keys(editForm.shares || {}).filter(n => names.includes(n) && editForm.shares[n]);
+        shares = {};
+        selected.forEach(n => { shares[n] = perPerson; });
+      }
     }
     shares = Object.fromEntries(Object.entries(shares).map(([k,v])=>[k,Math.round(parseFloat(v)*100)/100]));
 
@@ -777,23 +913,20 @@ export default function SplitEase() {
       ...cleanForm, total_amount: total, shares,
       original_currency: editForm.original_currency || null,
       original_amount: editForm.original_currency ? (parseFloat(editForm.original_amount) || null) : null,
+      headcount: editForm.split_type === 'headcount' ? (parseInt(editForm.headcount) || null) : null,
     };
     const {error} = await sb.from('expenses').update(upd).eq('id', editingId);
     if (error) { showToast('Error: '+error.message); return; }
 
     const oldExp = expenses.find(e => e.id === editingId);
     if (oldExp && oldExp.category !== editForm.category) {
-      const newOv = {...catOverrides};
-      newOv[editForm.item.toLowerCase().trim()] = editForm.category;
-      sigWords(editForm.item).forEach(w => { newOv[w] = editForm.category; });
-      setCatOverrides(newOv);
-      saveSetting('categoryOverrides', newOv);
+      const normalizedEditKeys = deriveOverrideKeys(editForm.item);
+      queueCategorySuggestions(editForm.item, editForm.category, oldExp.category);
       let count = 0;
       const updated = expenses.map(e => {
         if (e.id === editingId) return {...e, ...upd};
-        const sw = sigWords(e.item);
-        const lo = e.item.toLowerCase().trim();
-        if (lo === editForm.item.toLowerCase().trim() || sw.some(w => newOv[w] === editForm.category)) {
+        const expenseKeys = deriveOverrideKeys(e.item);
+        if (expenseKeys.some(key => normalizedEditKeys.includes(key))) {
           count++; return {...e, category: editForm.category};
         }
         return e;
@@ -827,8 +960,11 @@ export default function SplitEase() {
     expenses.forEach(e => {
       const payer = e.paid_by;
       if (nets[payer] !== undefined) {
-        nets[payer] += (e.total_amount || 0);
-        totals[payer] = (totals[payer] || 0) + (e.total_amount || 0);
+        const creditAmt = e.split_type === 'headcount'
+          ? Object.values(e.shares || {}).reduce((s, v) => s + (v || 0), 0)
+          : (e.total_amount || 0);
+        nets[payer] += creditAmt;
+        totals[payer] = (totals[payer] || 0) + creditAmt;
       }
       const shares = e.shares || {};
       Object.entries(shares).forEach(([name, amt]) => {
@@ -880,11 +1016,43 @@ export default function SplitEase() {
     return merged;
   }, [customCats, members]);
 
+  const overrideExamples = useMemo(() => {
+    const result = {};
+    Object.keys(catOverrides).forEach((key) => { result[key] = { total: 0, examples: [] }; });
+    expenses.forEach((expense) => {
+      const keys = deriveOverrideKeys(expense.item || '');
+      keys.forEach((key) => {
+        if (!result[key]) return;
+        result[key].total += 1;
+        if (!result[key].examples.includes(expense.item) && result[key].examples.length < 3) {
+          result[key].examples.push(expense.item);
+        }
+      });
+    });
+    return result;
+  }, [catOverrides, expenses]);
+
+  const suggestionExamples = useMemo(() => {
+    const result = {};
+    Object.keys(catSuggestions).forEach((key) => { result[key] = { total: 0, examples: [] }; });
+    expenses.forEach((expense) => {
+      const keys = deriveOverrideKeys(expense.item || '');
+      keys.forEach((key) => {
+        if (!result[key]) return;
+        result[key].total += 1;
+        if (!result[key].examples.includes(expense.item) && result[key].examples.length < 3) {
+          result[key].examples.push(expense.item);
+        }
+      });
+    });
+    return result;
+  }, [catSuggestions, expenses]);
+
   /* ── Import/Export ── */
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify({
       expenses, members: members.map(m=>({display_name:m.display_name,email:m.email})),
-      catOverrides, customCats, defaultCurrency: defCur
+      catOverrides, catSuggestions, customCats, defaultCurrency: defCur
     }, null, 2)], {type:'application/json'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `splitease-${currentList?.name || 'backup'}-${today()}.json`; a.click();
@@ -920,6 +1088,7 @@ export default function SplitEase() {
           const {data} = await sb.from('expenses').insert(rows).select();
           setExpenses(data || []);
           if (d.catOverrides) { setCatOverrides(d.catOverrides); saveSetting('categoryOverrides', d.catOverrides); }
+          if (d.catSuggestions) { setCatSuggestions(d.catSuggestions); saveSetting('categorySuggestions', d.catSuggestions); }
           if (d.customCats) { setCustomCats(d.customCats); saveSetting('customCats', d.customCats); }
           showToast(`Imported ${rows.length} expenses`);
         }
@@ -1011,6 +1180,124 @@ export default function SplitEase() {
     showToast('Deleted category: ' + name);
   };
 
+  const updateCatOverride = (key, value) => {
+    const next = { ...catOverrides, [key]: value };
+    setCatOverrides(next);
+    saveSetting('categoryOverrides', next);
+    showToast(`Updated learned category for ${key}`);
+  };
+
+  const queueCategorySuggestions = (text, category, autoCategory) => {
+    const keys = deriveOverrideKeys(text);
+    if (!keys.length) return;
+    const next = { ...catSuggestions };
+    let added = 0;
+    keys.forEach((key) => {
+      if (catOverrides[key]) return;
+      if (next[key]?.category === category) return;
+      next[key] = {
+        category,
+        source: prettifyMerchantText(text) || text,
+        autoCategory: autoCategory || null,
+      };
+      added += 1;
+    });
+    if (added > 0) {
+      setCatSuggestions(next);
+      saveSetting('categorySuggestions', next);
+      showToast(`Added ${added} category suggestion${added === 1 ? '' : 's'} for review`);
+    }
+  };
+
+  const renameCatOverride = (oldKey) => {
+    const draft = normalizeMerchantText(overrideDrafts[oldKey] || '');
+    if (!draft) {
+      showToast('Mapping name cannot be empty');
+      return;
+    }
+    if (draft === oldKey) return;
+    const next = { ...catOverrides };
+    const currentValue = next[oldKey];
+    delete next[oldKey];
+    next[draft] = currentValue;
+    setCatOverrides(next);
+    setOverrideDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[oldKey];
+      copy[draft] = draft;
+      return copy;
+    });
+    saveSetting('categoryOverrides', next);
+    showToast(`Renamed learned mapping to ${draft}`);
+  };
+
+  const updateCategorySuggestion = (key, patch) => {
+    const next = { ...catSuggestions, [key]: { ...catSuggestions[key], ...patch } };
+    setCatSuggestions(next);
+    saveSetting('categorySuggestions', next);
+  };
+
+  const renameCategorySuggestion = (oldKey) => {
+    const draft = normalizeMerchantText(overrideDrafts[oldKey] || '');
+    if (!draft) {
+      showToast('Suggestion name cannot be empty');
+      return;
+    }
+    if (draft === oldKey) return;
+    const next = { ...catSuggestions };
+    const currentValue = next[oldKey];
+    delete next[oldKey];
+    next[draft] = currentValue;
+    setCatSuggestions(next);
+    setOverrideDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[oldKey];
+      copy[draft] = draft;
+      return copy;
+    });
+    saveSetting('categorySuggestions', next);
+    showToast(`Renamed suggestion to ${draft}`);
+  };
+
+  const acceptCategorySuggestion = (key) => {
+    const suggestion = catSuggestions[key];
+    if (!suggestion) return;
+    const nextOverrides = { ...catOverrides, [key]: suggestion.category };
+    const nextSuggestions = { ...catSuggestions };
+    delete nextSuggestions[key];
+    setCatOverrides(nextOverrides);
+    setCatSuggestions(nextSuggestions);
+    saveSetting('categoryOverrides', nextOverrides);
+    saveSetting('categorySuggestions', nextSuggestions);
+    showToast(`Added learned category for ${key}`);
+  };
+
+  const dismissCategorySuggestion = (key) => {
+    const next = { ...catSuggestions };
+    delete next[key];
+    setCatSuggestions(next);
+    setOverrideDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
+    saveSetting('categorySuggestions', next);
+    showToast(`Dismissed suggestion for ${key}`);
+  };
+
+  const deleteCatOverride = (key) => {
+    const next = { ...catOverrides };
+    delete next[key];
+    setCatOverrides(next);
+    setOverrideDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
+    saveSetting('categoryOverrides', next);
+    showToast(`Removed learned category for ${key}`);
+  };
+
   /* ── Update Member Name ── */
   const updateMyName = async (newN) => {
     if (!newN.trim() || !currentList) return;
@@ -1057,7 +1344,7 @@ export default function SplitEase() {
     <AnimatePresence>
       {toast.show && (
         <motion.div initial={{opacity:0,y:-20}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-20}}
-          style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:99,background:'#222',color:'#f5f5ee',padding:'10px 20px',borderRadius:16,fontSize:11,letterSpacing:'0.08em',textTransform:'uppercase',fontWeight:700,textAlign:'center',fontFamily:MONO,maxWidth:320,boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+          style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:99,background:'#222',color:'#f5f5ee',padding:'10px 20px',borderRadius:16,fontSize: 12,letterSpacing:'0.08em',textTransform:'uppercase',fontWeight:700,textAlign:'center',fontFamily:MONO,maxWidth:320,boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
           {toast.msg}
         </motion.div>
       )}
@@ -1084,6 +1371,32 @@ export default function SplitEase() {
       <style>{THEME_CSS}</style>
       <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1}}
         style={{width:40,height:40,border:'4px solid #222',borderTopColor:'transparent',borderRadius:'50%'}}/>
+    </div>
+  );
+
+  // ── Set Password Screen (after invite link) ──
+  if (user && setPasswordMode) return (
+    <div className="se" style={s.centerPage}>
+      <style>{THEME_CSS}</style>
+      {ToastEl}
+      <motion.div initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}}
+        style={{...s.card,width:'100%',maxWidth:380,padding:'32px 24px'}}>
+        <div style={{fontSize:32,fontWeight:700,...s.upper,letterSpacing:'-0.02em',textAlign:'center',marginBottom:4}}>💰 SplitEase</div>
+        <div style={{...s.label,textAlign:'center',marginBottom:24}}>Set your password</div>
+        <div style={{marginBottom:16,position:'relative'}}>
+          <div style={s.label}>New Password</div>
+          <input type={showPass?'text':'password'} placeholder="••••••••" value={newPassword}
+            onChange={e=>setNewPassword(e.target.value)}
+            onKeyDown={async e=>{ if(e.key==='Enter') await handleSetPassword(); }}
+            style={{...s.input,paddingRight:40}} autoFocus/>
+          <button onClick={()=>setShowPass(!showPass)} style={{position:'absolute',right:12,bottom:12,background:'none',border:'none',cursor:'pointer',opacity:0.3}}>
+            {showPass ? <EyeOff size={16}/> : <Eye size={16}/>}
+          </button>
+        </div>
+        <button onClick={handleSetPassword} disabled={newPasswordBusy} style={{...s.btnDark,opacity:newPasswordBusy?0.5:1}}>
+          {newPasswordBusy ? '...' : 'Set Password & Continue'}
+        </button>
+      </motion.div>
     </div>
   );
 
@@ -1114,7 +1427,17 @@ export default function SplitEase() {
         <button onClick={handleAuth} disabled={authBusy} style={{...s.btnDark,opacity:authBusy?0.5:1,marginBottom:12}}>
           {authBusy ? '...' : authMode==='login' ? 'Log In' : 'Sign Up'}
         </button>
-        <p style={{textAlign:'center',fontSize:11,...s.upper,opacity:0.35}}>
+        {authMode==='login' && (
+          <p style={{textAlign:'center',marginBottom:4}}>
+            <button style={{...s.ghost,opacity:0.4,padding:0,fontSize:12,...s.upper}} onClick={async()=>{
+              if (!authEmail) { setAuthError('Enter your email first'); return; }
+              const {error} = await sb.auth.resetPasswordForEmail(authEmail, {redirectTo: window.location.origin});
+              if (error) setAuthError(error.message);
+              else { setAuthError(''); showToast('Password reset email sent'); }
+            }}>Forgot password?</button>
+          </p>
+        )}
+        <p style={{textAlign:'center',fontSize: 12,...s.upper,opacity:0.35}}>
           {authMode==='login' ? "Don't have an account? " : 'Already have an account? '}
           <button style={{...s.ghost,opacity:1,fontWeight:700,padding:0}} onClick={()=>{setAuthMode(authMode==='login'?'signup':'login');setAuthError('');}}>
             {authMode==='login' ? 'Sign Up' : 'Log In'}
@@ -1192,10 +1515,13 @@ export default function SplitEase() {
   /* ════════════════════════════════════════════════════════════
      HOME TAB
      ════════════════════════════════════════════════════════════ */
-  const HomeTab = () => (
+const HomeTab = () => (
     <div style={{paddingBottom:80}}>
+      <div style={{padding:'16px 16px 0'}}>
+        <div style={SHELL_HEADING_STYLE}>HOME</div>
+      </div>
       {/* Balance Header */}
-      <div style={{background:'#fff',color:'#1a1a1a',borderRadius:20,padding:20,margin:'16px 16px 0',boxShadow:'0 1px 6px rgba(0,0,0,0.08)',border:'1.5px solid #f0f0ea'}}>
+      <div style={{background:'#fff',color:'#1a1a1a',borderRadius:20,padding:20,margin:'0 16px 0',boxShadow:'0 1px 6px rgba(0,0,0,0.08)',border:'1.5px solid #f0f0ea'}}>
         <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
           <div>
             <div style={{fontSize:18,fontWeight:700,...s.upper}}>{currentList.name}</div>
@@ -1271,7 +1597,7 @@ export default function SplitEase() {
                     onKeyDown={e=>{if(e.key==='Enter')addSettlement();}}
                     style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:12,outline:'none',...s.tabnum}}/>
                   <button onClick={addSettlement}
-                    style={{fontFamily:MONO,fontSize:11,...s.upper,fontWeight:700,background:'#1a1a1a',color:'#fff',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
+                    style={{fontFamily:MONO,fontSize: 12,...s.upper,fontWeight:700,background:'#1a1a1a',color:'#fff',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
                     Record
                   </button>
                 </div>
@@ -1424,7 +1750,7 @@ export default function SplitEase() {
             {/* Split type */}
             <div style={{...s.label,marginBottom:6}}>Split type</div>
             <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
-              {['equal','ratio','percent','exact','payer'].map(st=>(
+              {['equal','ratio','percent','exact','payer','headcount'].map(st=>(
                 <button key={st} style={s.split(addSplitType===st)} onClick={()=>setAddSplitType(st)}>{st}</button>
               ))}
             </div>
@@ -1505,6 +1831,51 @@ export default function SplitEase() {
             {addSplitType === 'payer' && (
               <div style={{fontSize:10,opacity:0.4,...s.upper,background:'#F0F0EA',borderRadius:12,padding:8,marginBottom:12}}>
                 Entire amount assigned to the payer — no split.
+              </div>
+            )}
+
+            {/* Headcount inputs */}
+            {addSplitType === 'headcount' && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>Total people (incl. those not in this list)</div>
+                <input type="number" min="2" placeholder="e.g. 10" value={addHeadcount}
+                  onChange={e=>setAddHeadcount(e.target.value)} style={{...s.input,marginBottom:10}}/>
+                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>In-app members to split with</div>
+                {names.map(n => (
+                  <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                    <input type="checkbox" checked={addHeadcountMembers[n] !== false}
+                      onChange={e=>setAddHeadcountMembers(p=>({...p,[n]:e.target.checked}))}
+                      style={{width:14,height:14,cursor:'pointer'}}/>
+                    <span style={{fontSize:12,...s.upper}}>{n}</span>
+                  </div>
+                ))}
+                {addAmount > 0 && parseInt(addHeadcount) >= 2 && (() => {
+                  const hc = parseInt(addHeadcount);
+                  const bill = parseFloat(addAmount);
+                  const perPerson = bill / hc;
+                  const selected = names.filter(n => addHeadcountMembers[n] !== false);
+                  const tracked = perPerson * selected.length;
+                  return (
+                    <div style={{background:'#F0F0EA',borderRadius:12,padding:8,fontSize:10,...s.upper,marginTop:6}}>
+                      <div style={{display:'flex',justifyContent:'space-between',fontWeight:700,marginBottom:6}}>
+                        <span>{fmt(bill,defCur)} ÷ {hc} people</span>
+                        <span>{fmt(perPerson,defCur)}/person</span>
+                      </div>
+                      {selected.map(n=>(
+                        <div key={n} style={{display:'flex',justifyContent:'space-between',opacity:0.6,marginBottom:2}}>
+                          <span>{n}</span><span>{fmt(perPerson,defCur)}</span>
+                        </div>
+                      ))}
+                      <div style={{borderTop:'1px solid #d4d4cc',marginTop:6,paddingTop:6,display:'flex',justifyContent:'space-between',opacity:0.4}}>
+                        <span>{hc - selected.length} external people</span>
+                        <span>{fmt(bill - tracked,defCur)} collected outside</span>
+                      </div>
+                      <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontWeight:700}}>
+                        <span>Tracking in-app</span><span>{fmt(tracked,defCur)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -1666,9 +2037,14 @@ export default function SplitEase() {
                             <span style={s.tag(ci.bg,ci.tx)}>{exp.category}</span>
                             <span style={s.tag('#F0F0EA','#1a1a1a')}>{exp.date}</span>
                             {exp.original_currency && <span style={s.tag('#fef3c7','#92400e')}>{CURR_FLAG[exp.original_currency]||''} {fmt(exp.original_amount, exp.original_currency)}</span>}
-                            {exp.split_type && exp.split_type !== 'settlement' && (
+                            {exp.split_type && exp.split_type !== 'settlement' && exp.split_type !== 'headcount' && (
                               <span style={{...s.tag('#F0F0EA','#1a1a1a'),opacity:0.5}}>
                                 {exp.split_type === 'exact' ? 'custom' : exp.split_type}
+                              </span>
+                            )}
+                            {exp.split_type === 'headcount' && exp.headcount && (
+                              <span style={s.tag('#e0f2fe','#0369a1')}>
+                                {exp.headcount} ppl · {fmt(exp.total_amount / exp.headcount, defCur)}/ea
                               </span>
                             )}
                           </div>
@@ -1677,6 +2053,11 @@ export default function SplitEase() {
                       <div style={{textAlign:'right',flexShrink:0}}>
                         <div style={{fontSize:14,fontWeight:700,...s.tabnum}}>{fmt(exp.total_amount, defCur)}</div>
                         <div style={{fontSize:10,...s.upper,opacity:0.35,marginTop:2}}>{exp.paid_by} paid</div>
+                        {exp.split_type === 'headcount' && (
+                          <div style={{fontSize:9,...s.upper,opacity:0.25,marginTop:1}}>
+                            {fmt(Object.values(exp.shares||{}).reduce((a,b)=>a+b,0),defCur)} tracked
+                          </div>
+                        )}
                       </div>
                     </div>
                     {exp.shares && Object.keys(exp.shares).length > 0 && exp.split_type !== 'personal' && exp.split_type !== 'settlement' && (
@@ -1719,9 +2100,9 @@ export default function SplitEase() {
                           } else {
                             const rate = rates[cur] ? parseFloat((1 / rates[cur]).toFixed(6)) : 1;
                             if (!editForm.original_currency) {
-                              const total = parseFloat(editForm.total_amount) || 0;
-                              const origAmt = rate > 0 ? parseFloat((total / rate).toFixed(NO_DEC.has(cur)?0:2)) : 0;
-                              setEditForm(f => ({...f, original_currency: cur, original_amount: origAmt, exchange_rate: rate}));
+                              const origAmt = parseFloat(editForm.total_amount) || 0;
+                              const newTotal = parseFloat((origAmt * rate).toFixed(2));
+                              setEditForm(f => ({...f, original_currency: cur, original_amount: origAmt, exchange_rate: rate, total_amount: newTotal}));
                             } else {
                               setEditForm(f => {
                                 const origAmt = parseFloat(f.original_amount) || 0;
@@ -1748,7 +2129,7 @@ export default function SplitEase() {
                           }}
                           style={{...s.input,width:100,background:'#fff',padding:'6px 10px',flex:'0 0 auto'}}/>
                         <span style={{fontSize:10,...s.upper,opacity:0.5}}>{defCur}</span>
-                        <span style={{fontSize:11,fontWeight:700,...s.tabnum,marginLeft:'auto'}}>≈ {fmt(parseFloat(editForm.total_amount)||0, defCur)}</span>
+                        <span style={{fontSize: 12,fontWeight:700,...s.tabnum,marginLeft:'auto'}}>≈ {fmt(parseFloat(editForm.total_amount)||0, defCur)}</span>
                       </div>
                     )}
 
@@ -1766,13 +2147,14 @@ export default function SplitEase() {
                       <input type="date" value={editForm.date} onChange={e=>setEditForm({...editForm,date:e.target.value})} style={s.input}/>
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:8}}>
-                      {['equal','ratio','percent','personal','full','custom'].map(ss=>(
+                      {['equal','ratio','percent','personal','full','custom','headcount'].map(ss=>(
                         <button key={ss} style={s.split(editForm.split_type===ss)} onClick={()=>{
                           const total = parseFloat(editForm.total_amount) || 0;
                           let shares = {};
                           if (ss==='equal') names.forEach(n=>{shares[n]=total/names.length;});
                           else if (ss==='personal') shares = {[editForm.paid_by]:total};
                           else if (ss==='full') shares = {[names[0]]:total};
+                          else if (ss==='headcount') names.forEach(n=>{shares[n]=1;});
                           else shares = {...editForm.shares};
                           setEditForm({...editForm,split_type:ss,shares});
                         }}>{ss}</button>
@@ -1782,7 +2164,7 @@ export default function SplitEase() {
                       <div style={{marginBottom:8}}>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                            <span style={{fontSize:11,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
+                            <span style={{fontSize: 12,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
                             <input type="number" min="0" placeholder="0" value={editForm.shares?.[n]||''} onChange={e=>{
                               const ns2 = {...editForm.shares, [n]:e.target.value};
                               const total = parseFloat(editForm.total_amount)||0;
@@ -1807,7 +2189,7 @@ export default function SplitEase() {
                       <div style={{marginBottom:8}}>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                            <span style={{fontSize:11,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
+                            <span style={{fontSize: 12,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
                             <input type="number" min="0" max="100" placeholder="0" value={editForm.shares?.[n]||''} onChange={e=>setEditForm({...editForm,shares:{...editForm.shares,[n]:e.target.value}})} style={{...s.input,flex:1,padding:'8px 10px'}}/>
                             <span style={{fontSize:10,opacity:0.35}}>%</span>
                           </div>
@@ -1819,8 +2201,33 @@ export default function SplitEase() {
                       <div style={{marginBottom:8}}>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                            <span style={{fontSize:11,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
+                            <span style={{fontSize: 12,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
                             <input type="number" value={editForm.shares?.[n]||0} onChange={e=>setEditForm({...editForm,shares:{...editForm.shares,[n]:parseFloat(e.target.value)||0}})} style={{...s.input,flex:1,padding:'8px 10px'}}/>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {editForm.split_type==='headcount' && (
+                      <div style={{marginBottom:8}}>
+                        <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:4}}>Total people (incl. external)</div>
+                        <input type="number" min="2" placeholder="e.g. 10" value={editForm.headcount||''}
+                          onChange={e=>setEditForm({...editForm,headcount:e.target.value})}
+                          style={{...s.input,marginBottom:8}}/>
+                        <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:4}}>In-app members</div>
+                        {names.map(n=>(
+                          <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                            <input type="checkbox" checked={!!editForm.shares?.[n]}
+                              onChange={e=>{
+                                const ns2 = {...editForm.shares};
+                                if (e.target.checked) ns2[n] = 1; else delete ns2[n];
+                                setEditForm({...editForm,shares:ns2});
+                              }} style={{width:14,height:14,cursor:'pointer'}}/>
+                            <span style={{fontSize:12,...s.upper}}>{n}</span>
+                            {!!editForm.shares?.[n] && parseInt(editForm.headcount) >= 2 && (
+                              <span style={{fontSize:10,opacity:0.4,...s.tabnum,marginLeft:'auto'}}>
+                                {fmt((parseFloat(editForm.total_amount)||0)/parseInt(editForm.headcount),defCur)}
+                              </span>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1867,10 +2274,11 @@ export default function SplitEase() {
     const catTotals = {};
     const infoCatTotals = {};
     visExps.forEach(e => {
+      const amt = personFilter ? (e.shares?.[personFilter] || 0) : e.total_amount;
       if (STAT_EXCL.has(e.category)) {
-        infoCatTotals[e.category] = (infoCatTotals[e.category]||0) + e.total_amount;
+        infoCatTotals[e.category] = (infoCatTotals[e.category]||0) + amt;
       } else {
-        catTotals[e.category] = (catTotals[e.category]||0) + e.total_amount;
+        catTotals[e.category] = (catTotals[e.category]||0) + amt;
       }
     });
     // Add settlements for the info section
@@ -1882,6 +2290,9 @@ export default function SplitEase() {
 
     return (
       <div style={{paddingBottom:80,padding:16}}>
+        <div style={SHELL_HEADING_STYLE}>
+          STATISTICS
+        </div>
         {/* Month pills */}
         <div className="se-noscroll" style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8}}>
           {months.map(m=>(
@@ -1894,7 +2305,7 @@ export default function SplitEase() {
           <button onClick={()=>setPersonFilter('')}
             style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(!personFilter?{background:'#222',color:'#f5f5ee'}:{})}}>
             <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>Together</div>
-            <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(grandTotal,defCur)}</div>
+            <div style={{fontSize: 14,fontWeight:700,...s.tabnum}}>{fmt(grandTotal,defCur)}</div>
           </button>
           {names.map((n,i)=>{
             const active = personFilter===n;
@@ -1903,7 +2314,7 @@ export default function SplitEase() {
               <button key={n} onClick={()=>setPersonFilter(active?'':n)}
                 style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(active?{background:bg,color:'#fff'}:{})}}>
                 <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>{n}</div>
-                <div style={{fontSize:13,fontWeight:700,...s.tabnum}}>{fmt(personTotals[n]||0,defCur)}</div>
+                <div style={{fontSize: 14,fontWeight:700,...s.tabnum}}>{fmt(personTotals[n]||0,defCur)}</div>
               </button>
             );
           })}
@@ -1920,7 +2331,7 @@ export default function SplitEase() {
                   style={{fontSize:9,fontFamily:MONO}}>
                   {catData.map((dd,i)=>(<Cell key={i} fill={getCat(dd.name,customCats,members).c || '#6b7280'}/>))}
                 </Pie>
-                <RTooltip formatter={(v)=>fmt(v,defCur)} contentStyle={{fontFamily:MONO,fontSize:11}}/>
+                <RTooltip formatter={(v)=>fmt(v,defCur)} contentStyle={{fontFamily:MONO,fontSize: 12}}/>
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -1932,7 +2343,8 @@ export default function SplitEase() {
             <div style={{...s.label,marginBottom:12}}>Breakdown</div>
             {catData.map(({name,value})=>{
               const ci = getCat(name,customCats,members);
-              const pct = grandTotal > 0 ? (value/grandTotal*100) : 0;
+              const baseTotal = personFilter ? (personTotals[personFilter]||0) : grandTotal;
+              const pct = baseTotal > 0 ? (value/baseTotal*100) : 0;
               const isExpanded = expandedStatCats.has(name);
               const toggleCat = () => setExpandedStatCats(prev => {
                 const next = new Set(prev);
@@ -1956,12 +2368,12 @@ export default function SplitEase() {
                   {isExpanded && catExps.length > 0 && (
                     <div style={{marginTop:6,paddingLeft:4,borderLeft:`2px solid ${ci.c}40`}}>
                       {catExps.map((e,i) => (
-                        <div key={e.id||i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 6px',fontSize:11,...s.upper,borderRadius:6,marginBottom:1,background:i%2===0?'transparent':'#fafafa'}}>
+                        <div key={e.id||i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 6px',fontSize: 12,...s.upper,borderRadius:6,marginBottom:1,background:i%2===0?'transparent':'#fafafa'}}>
                           <div style={{flex:1,overflow:'hidden'}}>
                             <span style={{color:'#374151',fontWeight:600}}>{e.item||'—'}</span>
                             <span style={{opacity:0.4,marginLeft:6,fontSize:9}}>{e.date?.slice(5)}</span>
                           </div>
-                          <span style={{fontWeight:700,...s.tabnum,color:ci.tx,flexShrink:0,marginLeft:8}}>{fmt(e.total_amount,defCur)}</span>
+                          <span style={{fontWeight:700,...s.tabnum,color:ci.tx,flexShrink:0,marginLeft:8}}>{fmt(personFilter ? (e.shares?.[personFilter]||0) : e.total_amount,defCur)}</span>
                         </div>
                       ))}
                     </div>
@@ -1975,7 +2387,7 @@ export default function SplitEase() {
                 {infoCatData.map(({name,value}) => {
                   const ci = getCat(name,customCats,members);
                   return (
-                    <div key={name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',fontSize:11,...s.upper,opacity:0.6}}>
+                    <div key={name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',fontSize: 12,...s.upper,opacity:0.6}}>
                       <span style={{display:'flex',alignItems:'center',gap:5}}>{ci.emoji} {name}</span>
                       <span style={{...s.tabnum,fontWeight:600}}>{fmt(value,defCur)}</span>
                     </div>
@@ -2014,6 +2426,7 @@ export default function SplitEase() {
      ════════════════════════════════════════════════════════════ */
   const SettingsTab = () => (
     <div style={{paddingBottom:80,padding:16}}>
+      <div style={SHELL_HEADING_STYLE}>SETTINGS</div>
       {/* Session */}
       <div style={{...s.card,marginBottom:12}}>
         <div style={{...s.label,marginBottom:12}}>Session</div>
@@ -2095,7 +2508,7 @@ export default function SplitEase() {
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',gap:6}}>
           {ALL_CUR.filter(c => c !== defCur).map(c => (
-            <div key={c} style={{background:'#F0F0EA',borderRadius:12,padding:'8px 10px',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:11}}>
+            <div key={c} style={{background:'#F0F0EA',borderRadius:12,padding:'8px 10px',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize: 12}}>
               <span style={{fontWeight:700,...s.upper}}>{CURR_FLAG[c]||''} {c}</span>
               <span style={{opacity:0.4,...s.tabnum}}>{rates[c] ? rates[c].toFixed(NO_DEC.has(c)?0:2) : '–'}</span>
             </div>
@@ -2126,14 +2539,94 @@ export default function SplitEase() {
       </div>
 
       {/* Learned */}
+      {Object.keys(catSuggestions).length > 0 && (
+        <div style={{...s.card,marginBottom:12}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+            <div style={s.label}>Category Suggestions</div>
+            <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.6,padding:0}} onClick={()=>{setCatSuggestions({});saveSetting('categorySuggestions',{});showToast('Cleared all suggestions');}}>Clear all</button>
+          </div>
+          <div style={{display:'grid',gap:6}}>
+            {Object.entries(catSuggestions).sort(([a],[b]) => a.localeCompare(b)).map(([w,suggestion])=>(
+              <div key={w} style={{display:'grid',gap:6,background:'#F0F0EA',padding:'8px 10px',borderRadius:10}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto auto',gap:8,alignItems:'center'}}>
+                  <input
+                    value={Object.prototype.hasOwnProperty.call(overrideDrafts, w) ? overrideDrafts[w] : w}
+                    onChange={e=>setOverrideDrafts(prev => ({ ...prev, [w]: e.target.value }))}
+                    onBlur={()=>renameCategorySuggestion(w)}
+                    onKeyDown={e=>{ if (e.key === 'Enter') renameCategorySuggestion(w); }}
+                    style={{...s.input, padding:'8px 10px', fontSize: 12, background:'#fff', wordBreak:'break-word'}}
+                  />
+                  <select
+                    value={suggestion.category}
+                    onChange={e=>updateCategorySuggestion(w, { category: e.target.value })}
+                    style={{fontSize:10,fontFamily:MONO,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',background:'#fff',border:'1px solid #ddd',borderRadius:8,padding:'6px 8px',cursor:'pointer',outline:'none'}}
+                  >
+                    {allCatNames.map(name => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                  <button onClick={()=>renameCategorySuggestion(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
+                    <Check size={12}/>
+                  </button>
+                  <button onClick={()=>acceptCategorySuggestion(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.7,padding:0,lineHeight:1,color:'#15803d'}}>
+                    <Check size={14}/>
+                  </button>
+                  <button onClick={()=>dismissCategorySuggestion(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
+                    <X size={12}/>
+                  </button>
+                </div>
+                <div style={{fontSize:10,opacity:0.5,lineHeight:1.5}}>
+                  Suggested from "{suggestion.source || w}"{suggestion.autoCategory ? ` instead of ${suggestion.autoCategory}` : ''}.
+                  {suggestionExamples[w]?.total > 0 ? ` Seen ${suggestionExamples[w].total} time${suggestionExamples[w].total === 1 ? '' : 's'}: ${suggestionExamples[w].examples.map((example) => `"${example}"`).join(', ')}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {Object.keys(catOverrides).length > 0 && (
         <div style={{...s.card,marginBottom:12}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
             <div style={s.label}>Learned Categories</div>
             <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.6,padding:0}} onClick={()=>{setCatOverrides({});saveSetting('categoryOverrides',{});showToast('Cleared all overrides');}}>Clear all</button>
           </div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-            {Object.entries(catOverrides).map(([w,c])=>(<span key={w} style={{background:'#F0F0EA',padding:'4px 8px',borderRadius:8,fontSize:10}}>{w} → {c}</span>))}
+            <div style={{display:'grid',gap:6}}>
+            {Object.entries(catOverrides).sort(([a],[b]) => a.localeCompare(b)).map(([w,c])=>(
+              <div key={w} style={{display:'grid',gap:6,background:'#F0F0EA',padding:'8px 10px',borderRadius:10}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:8,alignItems:'center'}}>
+                  <input
+                    value={Object.prototype.hasOwnProperty.call(overrideDrafts, w) ? overrideDrafts[w] : w}
+                    onChange={e=>setOverrideDrafts(prev => ({ ...prev, [w]: e.target.value }))}
+                    onBlur={()=>renameCatOverride(w)}
+                    onKeyDown={e=>{ if (e.key === 'Enter') renameCatOverride(w); }}
+                    style={{...s.input, padding:'8px 10px', fontSize: 12, background:'#fff', wordBreak:'break-word'}}
+                  />
+                  <select
+                    value={c}
+                    onChange={e=>updateCatOverride(w, e.target.value)}
+                    style={{fontSize:10,fontFamily:MONO,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',background:'#fff',border:'1px solid #ddd',borderRadius:8,padding:'6px 8px',cursor:'pointer',outline:'none'}}
+                  >
+                    {allCatNames.map(name => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                  <button onClick={()=>renameCatOverride(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
+                    <Check size={12}/>
+                  </button>
+                  <button onClick={()=>deleteCatOverride(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
+                    <X size={12}/>
+                  </button>
+                </div>
+                {overrideExamples[w]?.total > 0 && (
+                  <div style={{fontSize:10,opacity:0.5,lineHeight:1.5}}>
+                    Seen {overrideExamples[w].total} time{overrideExamples[w].total === 1 ? '' : 's'}:
+                    {' '}
+                    {overrideExamples[w].examples.map((example, index) => (
+                      <span key={example}>
+                        "{example}"{index < overrideExamples[w].examples.length - 1 ? ', ' : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -2157,12 +2650,12 @@ export default function SplitEase() {
         <div style={{...s.card,marginBottom:12}}>
           <div style={{...s.label,marginBottom:8}}>Push Notifications</div>
           {pushPermission === 'denied' ? (
-            <div style={{fontSize:11,opacity:0.5,lineHeight:1.6}}>
+            <div style={{fontSize: 12,opacity:0.5,lineHeight:1.6}}>
               Notifications are blocked in your browser settings. Enable them for this site to receive alerts.
             </div>
           ) : pushSubscribed ? (
             <div>
-              <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>You'll receive a notification when someone adds or edits an expense in this list.</div>
+              <div style={{fontSize: 12,opacity:0.5,marginBottom:10}}>You'll receive a notification when someone adds or edits an expense in this list.</div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                 <button
                   style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
@@ -2181,7 +2674,7 @@ export default function SplitEase() {
             </div>
           ) : (
             <div>
-              <div style={{fontSize:11,opacity:0.5,marginBottom:10}}>Get notified when someone adds or edits an expense in this list.</div>
+              <div style={{fontSize: 12,opacity:0.5,marginBottom:10}}>Get notified when someone adds or edits an expense in this list.</div>
               <button
                 style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
                 onClick={pushSubscribe}
@@ -2199,60 +2692,61 @@ export default function SplitEase() {
         </div>
       )}
 
-      {/* MacroDroid / Webhook */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:8}}>Auto-Add from Bank Notifications</div>
-        <div style={{fontSize:11,opacity:0.5,lineHeight:1.6,marginBottom:10}}>
-          Use MacroDroid on Android to automatically add expenses when you receive a bank or Google Wallet notification.
-        </div>
-        {!webhookToken ? (
-          <button style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}} onClick={generateWebhookToken} disabled={webhookLoading}>
-            {webhookLoading ? 'Generating…' : 'Generate webhook token'}
-          </button>
-        ) : (
-          <div>
-            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Webhook URL</div>
-            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
-              <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.6}}>
-                {`https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook`}
-              </code>
-              <button onClick={()=>{navigator.clipboard?.writeText('https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook');showToast('URL copied');}}
-                style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                <Copy size={12}/>
-              </button>
-            </div>
-            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Secret token (keep private)</div>
-            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
-              <code style={{fontSize:10,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',letterSpacing:'0.05em'}}>
-                {webhookToken}
-              </code>
-              <button onClick={()=>{navigator.clipboard?.writeText(webhookToken);showToast('Token copied');}}
-                style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                <Copy size={12}/>
-              </button>
-            </div>
-            <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid POST body (Content Body tab)</div>
-            <div style={{display:'flex',alignItems:'flex-start',gap:6,marginBottom:6}}>
-              <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.8}}>
-                {`{"secret":"${webhookToken}","item":"{lv=merchant}","amount":"{lv=amount}","currency":"AUD","split":"{lv=split}"}`}
-              </code>
-              <button onClick={()=>{navigator.clipboard?.writeText(`{"secret":"${webhookToken}","item":"{lv=merchant}","amount":"{lv=amount}","currency":"AUD","split":"{lv=split}"}`);showToast('Body copied');}}
-                style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:2}}>
-                <Copy size={12}/>
-              </button>
-            </div>
-            <div style={{fontSize:10,opacity:0.35,lineHeight:1.6,marginBottom:10}}>
-              <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>{'{lv=split}'}</code> is a number 0–100 = other person's share. <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>0</code> = personal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>50</code> = equal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>100</code> = fully theirs · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>30</code> = you 70%, them 30%
-            </div>
-            <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5,padding:0}} onClick={revokeWebhookToken}>Revoke token</button>
+      {isAppOwner && (
+        <div style={{...s.card,marginBottom:12}}>
+          <div style={{...s.label,marginBottom:8}}>Auto-Add from Bank Notifications</div>
+          <div style={{fontSize: 12,opacity:0.5,lineHeight:1.6,marginBottom:10}}>
+            Use MacroDroid on Android to automatically add expenses when you receive a bank or Google Wallet notification.
           </div>
-        )}
-      </div>
+          {!webhookToken ? (
+            <button style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}} onClick={generateWebhookToken} disabled={webhookLoading}>
+              {webhookLoading ? 'Generating…' : 'Generate webhook token'}
+            </button>
+          ) : (
+            <div>
+              <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Webhook URL</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+                <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.6}}>
+                  {`https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook`}
+                </code>
+                <button onClick={()=>{navigator.clipboard?.writeText('https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook');showToast('URL copied');}}
+                  style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <Copy size={12}/>
+                </button>
+              </div>
+              <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Secret token (keep private)</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+                <code style={{fontSize:10,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',letterSpacing:'0.05em'}}>
+                  {webhookToken}
+                </code>
+                <button onClick={()=>{navigator.clipboard?.writeText(webhookToken);showToast('Token copied');}}
+                  style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <Copy size={12}/>
+                </button>
+              </div>
+              <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid POST body (Content Body tab)</div>
+              <div style={{display:'flex',alignItems:'flex-start',gap:6,marginBottom:6}}>
+                <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.8}}>
+                  {`{"secret":"${webhookToken}","item":"{lv=merchant}","amount":"{lv=amount}","currency":"AUD","split":"{lv=split}"}`}
+                </code>
+                <button onClick={()=>{navigator.clipboard?.writeText(`{"secret":"${webhookToken}","item":"{lv=merchant}","amount":"{lv=amount}","currency":"AUD","split":"{lv=split}"}`);showToast('Body copied');}}
+                  style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:2}}>
+                  <Copy size={12}/>
+                </button>
+              </div>
+              <div style={{fontSize:10,opacity:0.35,lineHeight:1.6,marginBottom:10}}>
+                <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>{'{lv=split}'}</code> is a number 0–100 = other person's share. <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>0</code> = personal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>50</code> = equal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>100</code> = fully theirs · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>30</code> = you 70%, them 30%
+              </div>
+              <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5,padding:0}} onClick={revokeWebhookToken}>Revoke token</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tips */}
       <div style={{...s.card,marginBottom:12}}>
         <div style={{...s.label,marginBottom:8}}>Quick Add Tips</div>
-        <div style={{fontSize:11,letterSpacing:'0.04em',opacity:0.4,lineHeight:1.8}}>
+        <div style={{fontSize: 12,letterSpacing:'0.04em',opacity:0.4,lineHeight:1.8}}>
           <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>dinner 50</code> — equal split in {defCur}</div>
           <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>coffee ¥500</code> — auto-converts from CNY</div>
           <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>taxi 30 Alice paid</code> — Alice paid</div>
@@ -2264,6 +2758,197 @@ export default function SplitEase() {
       </div>
     </div>
   );
+
+  const InvestingTab = () => {
+    const topLevelItems = [
+      { id: 'portfolio', label: 'Portfolio' },
+      { id: 'securities', label: 'Securities' },
+      { id: 'chat', label: 'Chat' },
+      { id: 'tools', label: 'Tools' },
+    ];
+    const portfolioItems = [
+      { id: 'summary', label: 'Summary' },
+      { id: 'statistics', label: 'Statistics' },
+      { id: 'portfolio', label: 'Holdings' },
+    ];
+    const securitiesItems = [
+      { id: 'pnl', label: 'P&L' },
+      { id: 'statistics', label: 'Statistics' },
+      { id: 'transactions', label: 'Transactions' },
+    ];
+    const handleInvestingViewChange = (nextView) => {
+      setInvestingView(nextView);
+      if (nextView === 'portfolio' && !['portfolio', 'summary', 'statistics'].includes(investingPortfolioView)) {
+        setInvestingPortfolioView('summary');
+      }
+      if (nextView === 'securities' && !['statistics', 'transactions', 'pnl'].includes(investingSecuritiesView)) {
+        setInvestingSecuritiesView('pnl');
+      }
+    };
+
+    return (
+      <div>
+        <div style={{ padding: '16px 16px 0' }}>
+          <div style={SHELL_HEADING_STYLE}>INVESTING</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 8 }}>
+            {topLevelItems.map((item) => (
+              <button key={item.id} onClick={() => handleInvestingViewChange(item.id)} style={s.sm(investingView === item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          {investingView === 'portfolio' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 6 }}>
+              {portfolioItems.map((item) => (
+                <button key={item.id} onClick={() => setInvestingPortfolioView(item.id)} style={s.split(investingPortfolioView === item.id)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {investingView === 'securities' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 6 }}>
+              {securitiesItems.map((item) => (
+                <button key={item.id} onClick={() => setInvestingSecuritiesView(item.id)} style={s.split(investingSecuritiesView === item.id)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {investingView === 'tools' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 6 }}>
+              <button onClick={() => setInvestingToolsView('portfolio')} style={s.split(investingToolsView === 'portfolio')}>
+                Portfolio Tools
+              </button>
+              <button onClick={() => setInvestingToolsView('transactions')} style={s.split(investingToolsView === 'transactions')}>
+                Securities Tools
+              </button>
+            </div>
+          )}
+        </div>
+
+        {investingView === 'portfolio' && investingPortfolioView === 'portfolio' && (
+          <FinancesTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            rates={rates}
+            balanceTxns={txns}
+            balanceCurrency={defCur}
+            expenseEntries={expenses}
+            expenseListName={currentList?.name || ''}
+            expenseListCurrency={defCur}
+            forcedView="table"
+            showViewToggle={false}
+            embedded
+            title="Investing"
+          />
+        )}
+        {investingView === 'portfolio' && investingPortfolioView === 'summary' && (
+          <FinancesTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            rates={rates}
+            balanceTxns={txns}
+            balanceCurrency={defCur}
+            expenseEntries={expenses}
+            expenseListName={currentList?.name || ''}
+            expenseListCurrency={defCur}
+            forcedView="summary"
+            showViewToggle={false}
+            embedded
+            title="Investing"
+          />
+        )}
+        {investingView === 'portfolio' && investingPortfolioView === 'statistics' && (
+          <FinancesTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            rates={rates}
+            balanceTxns={txns}
+            balanceCurrency={defCur}
+            expenseEntries={expenses}
+            expenseListName={currentList?.name || ''}
+            expenseListCurrency={defCur}
+            forcedView="statistics"
+            showViewToggle={false}
+            embedded
+            title="Investing"
+          />
+        )}
+        {investingView === 'chat' && (
+          <FinancesTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            rates={rates}
+            balanceTxns={txns}
+            balanceCurrency={defCur}
+            expenseEntries={expenses}
+            expenseListName={currentList?.name || ''}
+            expenseListCurrency={defCur}
+            forcedView="chat"
+            showViewToggle={false}
+            embedded
+            title="Investing"
+          />
+        )}
+        {investingView === 'securities' && investingSecuritiesView === 'statistics' && (
+          <SecuritiesStatisticsTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+          />
+        )}
+        {investingView === 'securities' && investingSecuritiesView === 'transactions' && (
+          <TransactionsTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            forcedView="ledger"
+            showViewToggle={false}
+            embedded
+          />
+        )}
+        {investingView === 'securities' && investingSecuritiesView === 'pnl' && (
+          <TransactionsTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            forcedView="pnl"
+            showViewToggle={false}
+            embedded
+          />
+        )}
+        {investingView === 'tools' && investingToolsView === 'portfolio' && (
+          <FinancesTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            rates={rates}
+            balanceTxns={txns}
+            balanceCurrency={defCur}
+            forcedView="settings"
+            showViewToggle={false}
+            embedded
+            title="Investing"
+          />
+        )}
+        {investingView === 'tools' && investingToolsView === 'transactions' && (
+          <TransactionsTab
+            user={user}
+            sb={sb}
+            showToast={showToast}
+            forcedView="settings"
+            showViewToggle={false}
+            embedded
+          />
+        )}
+      </div>
+    );
+  };
 
   /* ════════════════════════════════════════════════════════════
      MAIN LAYOUT
@@ -2277,31 +2962,32 @@ export default function SplitEase() {
       {tab === 'home' && HomeTab()}
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
-      {tab === 'finances' && <FinancesTab user={user} sb={sb} showToast={showToast} rates={rates} MONO={MONO} balanceTxns={txns} balanceCurrency={defCur} />}
-      {tab === 'transactions' && <TransactionsTab user={user} sb={sb} showToast={showToast} />}
+      {isAppOwner && tab === 'investing' && InvestingTab()}
+      {tab === 'grilld' && <GrilldTab />}
 
-      {/* Footer */}
-      <div style={{
-        textAlign:'center',
-        padding:'16px 16px 80px',
-        fontSize:9,
-        letterSpacing:'0.08em',
-        textTransform:'uppercase',
-        opacity:0.2,
-        fontFamily:MONO,
-        lineHeight:1.8,
-      }}>
-        <div>© {new Date().getFullYear()} By Roland Chu. All rights reserved.</div>
-        <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''}</div>
-      </div>
+      {tab !== 'investing' && tab !== 'grilld' && (
+        <div style={{
+          textAlign:'center',
+          padding:'16px 16px 80px',
+          fontSize:9,
+          letterSpacing:'0.08em',
+          textTransform:'uppercase',
+          opacity:0.2,
+          fontFamily:MONO,
+          lineHeight:1.8,
+        }}>
+          <div>© {new Date().getFullYear()} By Roland Chu. All rights reserved.</div>
+          <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''}</div>
+        </div>
+      )}
 
       {/* Bottom Nav */}
       <div style={{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:480,background:'#fff',borderTop:'1px solid #eee',boxShadow:'0 -2px 10px rgba(0,0,0,0.04)',zIndex:40,display:'flex',fontFamily:MONO}}>
         {[
           {id:'home',icon:HomeIcon,label:'Home'},
           {id:'stats',icon:BarChart3,label:'Stats'},
-          {id:'finances',icon:TrendingUp,label:'Finances'},
-          {id:'transactions',icon:Receipt,label:'Txns'},
+          ...(isAppOwner ? [{id:'investing',icon:TrendingUp,label:'Investing'}] : []),
+          {id:'grilld',icon:()=><span style={{fontSize:16}}>🥩</span>,label:"Grill'd"},
           {id:'settings',icon:SettingsIcon,label:'Settings'},
         ].map(t=>(
           <button key={t.id} onClick={()=>{setTab(t.id);setEditingId(null);}}
