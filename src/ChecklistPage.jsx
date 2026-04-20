@@ -44,12 +44,13 @@ export default function ChecklistPage({ storageKey, title, subtitle, filename, i
   });
 
   const tick = (id) => {
-    if (!values[id]) setVal(id, 'yes');
+    if (!values[id] || values[id].toLowerCase() === 'no') setVal(id, 'yes');
     setHid(id, true);
   };
 
   const cross = (id) => {
-    if (!values[id]) setVal(id, 'No');
+    if (!values[id] || values[id].toLowerCase() === 'yes') setVal(id, 'No');
+    setHid(id, true);
   };
 
   const exportTxt = () => {
