@@ -1,4 +1,3 @@
-// supaBase account xyzchu@hotmail.com
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -24,7 +23,6 @@ import { usePushNotifications } from './usePushNotifications';
    ══════════════════════════════════════════════════════════════ */
 
 const MONO = '"IBM Plex Mono", monospace';
-const APP_OWNER_EMAIL = 'xyzchu@hotmail.com';
 
 const THEME_CSS = `
   .se * { box-sizing: border-box; }
@@ -2767,7 +2765,7 @@ const HomeTab = () => (
       </div>
 
       {/* Permissions note — only visible to app owner */}
-      {user?.email === APP_OWNER_EMAIL && (
+      {can('webhook') && (
         <div style={{...s.card,marginBottom:12,borderLeft:'3px solid #e5e7eb'}}>
           <div style={{...s.label,marginBottom:8}}>Feature Permissions</div>
           <div style={{fontSize:12,opacity:0.5,lineHeight:1.8,marginBottom:10}}>
