@@ -1,16 +1,9 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, X } from 'lucide-react';
-import GrilldTab from './GrilldTab';
-import LiquorlandTab from './LiquorlandTab';
+import { Plus, Trash2 } from 'lucide-react';
 import ChecklistPage from './ChecklistPage';
 
 const MONO = '"IBM Plex Mono", monospace';
 const sq = s => ({ fontFamily: MONO, ...s });
-
-const FIXED = [
-  { id: 'grilld',     label: "Grill'd" },
-  { id: 'liquorland', label: 'Liquorland' },
-];
 
 function loadCustom() {
   try { const s = localStorage.getItem('shopper_custom_pages'); if (s) return JSON.parse(s); } catch {}
@@ -21,7 +14,7 @@ function saveCustom(pages) {
 }
 
 export default function ShopperTab() {
-  const [venue, setVenue] = useState('grilld');
+  const [venue, setVenue] = useState(() => loadCustom()[0]?.id ?? null);
   const [customPages, setCustomPages] = useState(loadCustom);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -65,11 +58,10 @@ export default function ShopperTab() {
     ['_values', '_hidden', '_date'].forEach(suffix => {
       try { localStorage.removeItem(`${id}${suffix}`); } catch {}
     });
-    setVenue('grilld');
+    setVenue(next.length ? next[0].id : null);
     setConfirmDelete(false);
   };
 
-  const allVenues = [...FIXED, ...customPages];
   const activePage = customPages.find(p => p.id === venue);
 
   return (
@@ -83,7 +75,7 @@ export default function ShopperTab() {
       }}
         className="se-noscroll"
       >
-        {allVenues.map(v => (
+        {customPages.map(v => (
           <button key={v.id} onClick={() => { setVenue(v.id); setCreating(false); setConfirmDelete(false); }}
             style={sq({
               fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em',
@@ -147,11 +139,14 @@ export default function ShopperTab() {
         </div>
       )}
 
-      {/* Fixed pages */}
-      {!creating && venue === 'grilld'     && <GrilldTab />}
-      {!creating && venue === 'liquorland' && <LiquorlandTab />}
+      {/* Empty state */}
+      {!creating && customPages.length === 0 && (
+        <div style={sq({ padding: '60px 16px', textAlign: 'center', opacity: 0.35, fontSize: 13 })}>
+          No pages yet — tap + New to create one
+        </div>
+      )}
 
-      {/* Custom pages */}
+      {/* Pages */}
       {!creating && activePage && (
         <div>
           <ChecklistPage
