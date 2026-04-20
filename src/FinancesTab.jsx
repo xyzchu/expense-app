@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Trash2, X, Eye, EyeOff, Upload, ChevronDown,
@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 
 /* ─── constants ─────────────────────────────────────────────────── */
-const MONO = '"SF Mono","Fira Code","Cascadia Code","Consolas","Liberation Mono",monospace';
+const MONO = '"IBM Plex Mono", monospace';
 const CATS = ['Cash', 'Securities', 'Credit Card', 'Loan', 'Income', 'Expense', 'Points/Miles', 'Property', 'Others'];
 const CAT_COLOR = {
   Cash: '#3b82f6', Securities: '#8b5cf6', 'Credit Card': '#ef4444', Loan: '#b91c1c',
@@ -18,6 +18,8 @@ const CATS_EXCLUDED = new Set(['Others']);
 const ALL_CUR = ['HKD', 'AUD', 'USD', 'CNY', 'THB', 'EUR', 'SGD'];
 // Fallback HKD-based rates (1 unit of currency = X HKD)
 const FALLBACK_HKD = { HKD: 1, AUD: 4.95, USD: 7.78, CNY: 1.07, THB: 0.22, EUR: 8.55, SGD: 5.80 };
+const DEFAULT_EXPECTED_NET_ASSET_BASE_MONTH = '2026-04';
+const DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE = 19000000;
 
 /* ─── pure helpers ─────────────────────────────────────────────── */
 const fmtNum = (n, cur = 'HKD') => {
@@ -73,17 +75,42 @@ const cvtHKD = (amount, from, to, hkdRates) => {
   return (amount * (r[from] || FALLBACK_HKD[from] || 1)) / (r[to] || FALLBACK_HKD[to] || 1);
 };
 
+const compareTxnOrder = (a, b) => {
+  const byDate = (a.transaction_date || '').localeCompare(b.transaction_date || '');
+  if (byDate !== 0) return byDate;
+
+  const sortA = Number(a.sort_order);
+  const sortB = Number(b.sort_order);
+  const hasSortA = Number.isFinite(sortA);
+  const hasSortB = Number.isFinite(sortB);
+  if (hasSortA && hasSortB && sortA !== sortB) return sortA - sortB;
+  if (hasSortA && !hasSortB) return -1;
+  if (!hasSortA && hasSortB) return 1;
+
+  const byCreated = (a.created_at || '').localeCompare(b.created_at || '');
+  if (byCreated !== 0) return byCreated;
+
+  return String(a.id || '').localeCompare(String(b.id || ''));
+};
+
+const normalizeBroker = (account) => {
+  const raw = String(account || '').trim();
+  if (/futu/i.test(raw)) return 'Futubull';
+  if (/hsbc/i.test(raw)) return 'HSBC';
+  return raw || 'Other';
+};
+
 /* ─── styles ─────────────────────────────────────────────────────── */
 const S = {
   card:    { background: '#fff', borderRadius: 16, padding: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: 12 },
-  input:   { border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '9px 12px', fontSize: 13, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%', boxSizing: 'border-box' },
+  input:   { border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '9px 12px', fontSize: 14, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%', boxSizing: 'border-box' },
   inputSm: { border: '1.5px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%', boxSizing: 'border-box', textAlign: 'right' },
   btnDark: { background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 12, fontFamily: MONO, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em', textTransform: 'uppercase' },
   btnGhost:{ background: 'none', border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontFamily: MONO, fontWeight: 600, cursor: 'pointer', color: '#374151' },
   btnRed:  { background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 12, fontFamily: MONO, fontWeight: 700, cursor: 'pointer' },
   label:   { fontSize: 10, fontFamily: MONO, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b7280' },
   pill: (active) => ({
-    display: 'inline-block', padding: '5px 12px', borderRadius: 20, fontSize: 11,
+    display: 'inline-block', padding: '5px 12px', borderRadius: 20, fontSize: 12,
     fontFamily: MONO, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
     background: active ? '#1a1a1a' : '#f3f4f6', color: active ? '#fff' : '#374151',
     border: 'none', letterSpacing: '0.04em',
@@ -93,17 +120,33 @@ const S = {
     fontFamily: MONO, fontWeight: 700, textTransform: 'uppercase',
     background: (CAT_COLOR[cat] || '#6b7280') + '20', color: CAT_COLOR[cat] || '#6b7280',
   }),
-  select: { border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '9px 12px', fontSize: 13, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%' },
+  select: { border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '9px 12px', fontSize: 14, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%' },
 };
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════════════════════════ */
-export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, balanceCurrency }) {
+export default function FinancesTab({
+  user,
+  sb,
+  showToast,
+  rates,
+  balanceTxns,
+  balanceCurrency,
+  expenseEntries = [],
+  expenseListName = '',
+  expenseListCurrency = 'AUD',
+  forcedView = null,
+  showViewToggle = true,
+  embedded = false,
+  title = 'Finances',
+}) {
 
   /* ── state ── */
   const [accounts,  setAccounts]  = useState([]);
   const [snapshots, setSnapshots] = useState([]);
+  const [securityTxns, setSecurityTxns] = useState([]);
+  const [savedStockPrices, setSavedStockPrices] = useState({});
   const [dateRates, setDateRates] = useState({});  // { "2026-03-12": { HKD:1, AUD:5.12, ... } }
   const [dates,            setDates]           = useState([]);
   const [selDate,          setSelDate]         = useState('');
@@ -143,7 +186,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
 
   // chat
   const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', content: 'Hi! Ask me anything about your finances — e.g. "What is my net worth in HKD?" or "Average cash balance in 2025?"' }
+    { role: 'assistant', content: 'Hi! Ask me anything about your finances — e.g. "What is my net worth in HKD?", "Average cash balance in 2025?", or "What is MSFT trading at right now?"' }
   ]);
   const [chatInput,  setChatInput]  = useState('');
   const [chatLoading,setChatLoading]= useState(false);
@@ -161,6 +204,9 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   const [showRatesFor,    setShowRatesFor]     = useState(false);
   const [homeListName,    setHomeListName]     = useState('Home');
   const [expensePerson,   setExpensePerson]   = useState(''); // display_name to filter; '' = mine
+  const [expectedNetAssetBaseMonth, setExpectedNetAssetBaseMonth] = useState(DEFAULT_EXPECTED_NET_ASSET_BASE_MONTH);
+  const [expectedNetAssetBaseValue, setExpectedNetAssetBaseValue] = useState(String(DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE));
+  const [usInflationRates, setUsInflationRates] = useState({});
 
   // confirm delete
   const [confirmDeleteAcc,  setConfirmDeleteAcc]  = useState(null);
@@ -168,12 +214,14 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
 
   // show/hide edit controls in table view
   const [showEdits, setShowEdits] = useState(false);
+  const [expandedDormantBanks, setExpandedDormantBanks] = useState(new Set());
 
   // expanded categories in summary view
   const [expandedCats, setExpandedCats] = useState(new Set());
 
   // inline balance editing
   const [editingBalance, setEditingBalance] = useState(null); // { accId, value }
+  const activeView = forcedView ?? view;
 
   /* ── derived dates ── */
   useEffect(() => {
@@ -194,20 +242,33 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   /* ── load from DB ── */
   const loadAll = useCallback(async () => {
     if (!user || !sb) return;
-    const [{ data: accs }, { data: snaps }, { data: settings }, { data: dRates }] = await Promise.all([
+    const [{ data: accs }, { data: snaps }, { data: settings }, { data: dRates }, { data: txns }] = await Promise.all([
       sb.from('financial_accounts').select('*').eq('user_id', user.id).order('sort_order'),
       sb.from('financial_snapshots').select('*').eq('user_id', user.id).order('snapshot_date', { ascending: false }),
       sb.from('user_settings').select('*').eq('user_id', user.id),
       sb.from('financial_date_rates').select('*').eq('user_id', user.id),
+      sb.from('securities_transactions').select('*').eq('user_id', user.id),
     ]);
     if (accs) setAccounts(accs);
     if (snaps) setSnapshots(snaps);
+    if (txns) setSecurityTxns(txns);
     if (dRates) {
       const rmap = {};
       for (const r of dRates) rmap[r.snapshot_date] = r.rates;
       setDateRates(rmap);
     }
     if (settings) {
+      const savedPrices = {};
+      settings
+        .filter(r => String(r.key).startsWith('latest_stock_price:'))
+        .forEach((r) => {
+          try {
+            const ticker = String(r.key).split(':')[1]?.toUpperCase();
+            const parsed = JSON.parse(r.value);
+            if (ticker && parsed?.price != null) savedPrices[ticker] = Number(parsed.price);
+          } catch {}
+        });
+      setSavedStockPrices(savedPrices);
       const k = settings.find(r => r.key === 'xai_api_key');
       if (k?.value) setXaiApiKey(k.value);
       const c = settings.find(r => r.key === 'finances_display_currency');
@@ -220,10 +281,32 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       if (vm?.value) setVisionModel(vm.value);
       const ep = settings.find(r => r.key === 'expense_person');
       if (ep?.value) setExpensePerson(ep.value);
+      const enabm = settings.find(r => r.key === 'expected_net_asset_base_month');
+      if (enabm?.value) setExpectedNetAssetBaseMonth(enabm.value);
+      const enabv = settings.find(r => r.key === 'expected_net_asset_base_value');
+      if (enabv?.value != null) setExpectedNetAssetBaseValue(String(enabv.value));
     }
   }, [user, sb]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/us-cpi')
+      .then((res) => {
+        if (!res.ok) throw new Error(`U.S. CPI request failed: ${res.status}`);
+        return res.json();
+      })
+      .then((json) => {
+        if (!cancelled && json?.monthlyRates) {
+          setUsInflationRates(json.monthlyRates);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setUsInflationRates({});
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   /* ── rate helpers ── */
   // Convert app's USD-based rates prop to HKD-based: { HKD:1, AUD:4.95, USD:7.78, ... }
@@ -278,6 +361,33 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   };
 
   const prevDate = selDate === 'current' ? (dates[0] || null) : (dates[dates.indexOf(selDate) + 1] || null);
+  const dormantCutoffDate = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    return d.toISOString().slice(0, 10);
+  }, []);
+
+  const recentNonZeroAccountIds = useMemo(() => {
+    const activeIds = new Set();
+    snapshots.forEach((snap) => {
+      if (!snap?.account_id || !snap?.snapshot_date) return;
+      if (snap.snapshot_date < dormantCutoffDate) return;
+      if (Math.abs(Number(snap.balance || 0)) > 0.000001) activeIds.add(snap.account_id);
+    });
+    return activeIds;
+  }, [snapshots, dormantCutoffDate]);
+  const isAccountDormant = useCallback((acc) => !recentNonZeroAccountIds.has(acc.id), [recentNonZeroAccountIds]);
+  const tableRateCurrencies = useMemo(() => (
+    [...new Set(
+      accounts
+        .filter((acc) => {
+          if (isAccountDormant(acc) && !expandedDormantBanks.has(acc.bank)) return false;
+          const balance = bal(acc.id, selDate);
+          return balance != null && acc.currency !== displayCurrency && acc.currency !== 'PTS';
+        })
+        .map((acc) => acc.currency)
+    )].sort()
+  ), [accounts, expandedDormantBanks, isAccountDormant, selDate, displayCurrency, snapshots]);
 
   /* ── month-based helpers for Summary view ── */
   // Latest balance for an account within a given month (YYYY-MM)
@@ -316,6 +426,53 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     }
     return byCur;
   }, [accounts, balForMonth]);
+
+  const brokerSecurityPositions = useMemo(() => {
+    const rows = securityTxns
+      .filter((t) => t.ticker && (t.type === 'BUY' || t.type === 'SELL' || t.type === 'DIVIDEND'))
+      .slice()
+      .sort(compareTxnOrder);
+
+    const positions = new Map();
+    rows.forEach((txn) => {
+      const broker = normalizeBroker(txn.account);
+      const ticker = String(txn.ticker || '').toUpperCase();
+      const key = `${broker}::${ticker}`;
+      if (!positions.has(key)) {
+        positions.set(key, {
+          broker,
+          ticker,
+          shares: 0,
+          latestTradePrice: null,
+        });
+      }
+      const row = positions.get(key);
+      const qty = Number(txn.quantity || 0);
+      if (txn.type === 'BUY' && qty > 0) row.shares += qty;
+      if (txn.type === 'SELL' && qty > 0) row.shares = Math.max(0, row.shares - qty);
+      if ((txn.type === 'BUY' || txn.type === 'SELL') && Number(txn.price || 0) > 0) {
+        row.latestTradePrice = Number(txn.price);
+      }
+    });
+
+    const hkdRates = appToHKD();
+    const brokerTotals = new Map();
+    [...positions.values()]
+      .filter((row) => row.shares > 0)
+      .forEach((row) => {
+        const currentPrice = savedStockPrices[row.ticker] ?? row.latestTradePrice ?? 0;
+        const usdValue = row.shares * currentPrice;
+        const displayValue = cvtHKD(usdValue, 'USD', displayCurrency, hkdRates);
+        brokerTotals.set(row.broker, (brokerTotals.get(row.broker) || 0) + displayValue);
+      });
+
+    return ['HSBC', 'Futubull']
+      .map((broker) => ({
+        broker,
+        value: brokerTotals.get(broker) || 0,
+      }))
+      .filter((row) => row.value > 0);
+  }, [securityTxns, savedStockPrices, displayCurrency, appToHKD]);
 
   const prevSummaryMonth = selSummaryMonth
     ? (summaryMonths[summaryMonths.indexOf(selSummaryMonth) + 1] || null)
@@ -691,8 +848,15 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
 
   // Auto-load home stats when summary month changes
   useEffect(() => {
-    if (view === 'summary' && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
-  }, [view, selSummaryMonth, loadHomeStatsForMonth]);
+    if (activeView === 'summary' && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
+  }, [activeView, selSummaryMonth, loadHomeStatsForMonth]);
+
+  useEffect(() => {
+    if (activeView !== 'summary') return;
+    summaryMonths.forEach((month) => {
+      loadHomeStatsForMonth(month);
+    });
+  }, [activeView, summaryMonths, loadHomeStatsForMonth]);
 
   /* ── add account ── */
   const addAccount = async () => {
@@ -786,8 +950,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
 
   // Load Home list expenses when chat view opens
   useEffect(() => {
-    if (view === 'chat') loadHomeExpenses();
-  }, [view, loadHomeExpenses]);
+    if (activeView === 'chat') loadHomeExpenses();
+  }, [activeView, loadHomeExpenses]);
 
   const buildContext = () => {
     const recentDates = dates.slice(0, 24);
@@ -828,6 +992,59 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       ctx += '\n';
     }
 
+    if (securityTxns.length) {
+      ctx += `\n--- INVESTING SECURITY TRANSACTIONS ---\n`;
+      const byMonth = {};
+      securityTxns
+        .slice()
+        .sort(compareTxnOrder)
+        .forEach((txn) => {
+          const month = txn.transaction_date?.slice(0, 7) || 'Unknown';
+          if (!byMonth[month]) byMonth[month] = { buy: 0, sell: 0, dividend: 0, count: 0, items: [] };
+          const amount = Number(txn.amount || 0);
+          if (txn.type === 'BUY') byMonth[month].buy += amount;
+          if (txn.type === 'SELL') byMonth[month].sell += amount;
+          if (txn.type === 'DIVIDEND') byMonth[month].dividend += amount;
+          byMonth[month].count += 1;
+          if (byMonth[month].items.length < 20) {
+            const qty = Number(txn.quantity || 0);
+            byMonth[month].items.push(
+              `    ${txn.transaction_date} [${txn.type}] ${txn.account || '—'} ${txn.ticker || txn.name || '—'} qty=${qty || 0} ${txn.currency || 'USD'} ${amount.toFixed(2)}`
+            );
+          }
+        });
+      for (const [month, data] of Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 18)) {
+        ctx += `\n${month}: Buys=${data.buy.toFixed(2)}, Sells=${data.sell.toFixed(2)}, Dividends=${data.dividend.toFixed(2)}, Count=${data.count}\n`;
+        ctx += data.items.join('\n') + '\n';
+      }
+    }
+
+    if (expenseEntries.length) {
+      const listName = expenseListName || 'Current expense list';
+      const cur = expenseListCurrency || balanceCurrency || 'AUD';
+      ctx += `\n--- INCOME / EXPENSE LEDGER (${listName}, currency: ${cur}) ---\n`;
+      const byMonth = {};
+      for (const entry of expenseEntries) {
+        const month = entry.date?.slice(0, 7);
+        if (!month) continue;
+        if (!byMonth[month]) byMonth[month] = { income: 0, expense: 0, settlement: 0, count: 0, items: [] };
+        const amount = Number(entry.total_amount || 0);
+        if (entry.category === 'Income') byMonth[month].income += amount;
+        else if (entry.split_type === 'settlement' || entry.category === 'Settlement') byMonth[month].settlement += amount;
+        else byMonth[month].expense += amount;
+        byMonth[month].count += 1;
+        if (byMonth[month].items.length < 25) {
+          byMonth[month].items.push(
+            `    ${entry.date} [${entry.category}] ${entry.item}: ${cur} ${amount.toFixed(2)} (paid by ${entry.paid_by || '—'})`
+          );
+        }
+      }
+      for (const [month, data] of Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 24)) {
+        ctx += `\n${month}: Income=${cur} ${data.income.toFixed(2)}, Expense=${cur} ${data.expense.toFixed(2)}, Settlements=${cur} ${data.settlement.toFixed(2)}, Net=${cur} ${(data.income - data.expense).toFixed(2)}, Count=${data.count}\n`;
+        ctx += data.items.join('\n') + '\n';
+      }
+    }
+
     // Home list expenses
     if (homeExpenses.length) {
       const cur = homeExpenses[0].listCurrency;
@@ -860,20 +1077,28 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     setChatMessages(m => [...m, { role: 'user', content: userMsg }]);
     setChatLoading(true);
     try {
-      const res = await fetch('https://api.x.ai/v1/chat/completions', {
+      const res = await fetch('https://api.x.ai/v1/responses', {
         method: 'POST',
         headers: { Authorization: `Bearer ${xaiApiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: xaiModel,
-          messages: [
+          input: [
             { role: 'system', content: `You are a personal financial assistant. Answer concisely.\n\n${buildContext()}` },
             ...chatMessages.filter(m => m.role !== 'system'),
             { role: 'user', content: userMsg }
           ],
+          tools: [
+            { type: 'web_search' },
+          ],
         })
       });
       const json = await res.json();
-      setChatMessages(m => [...m, { role: 'assistant', content: json.choices?.[0]?.message?.content || 'No response' }]);
+      const text =
+        json.output_text ||
+        json.output?.find(item => item.type === 'message')?.content?.find(c => c.type === 'output_text')?.text ||
+        json.error?.message ||
+        'No response';
+      setChatMessages(m => [...m, { role: 'assistant', content: text }]);
     } catch (err) {
       setChatMessages(m => [...m, { role: 'assistant', content: 'Error: ' + err.message }]);
     }
@@ -978,48 +1203,52 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   ══════════════════════════════════════════════════════════════ */
 
   const TopBar = (
-    <div style={{ padding: '16px 16px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Finances</div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
-            style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '5px 8px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
-            {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <button onClick={() => fileRef.current?.click()} disabled={extracting}
-            style={{ ...S.btnGhost, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
-            {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
-            <span style={{ fontSize: 11 }}>Scan</span>
-          </button>
-        </div>
+    <div style={{ padding: `${embedded ? 8 : 16}px 16px 0` }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showViewToggle ? 10 : 12 }}>
+        {!embedded ? <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>{title}</div> : <div />}
+        {activeView !== 'chat' ? (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
+              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '5px 8px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
+              {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <button onClick={() => fileRef.current?.click()} disabled={extracting}
+              style={{ ...S.btnGhost, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
+              <span style={{ fontSize: 12 }}>Scan</span>
+            </button>
+          </div>
+        ) : <div />}
         <input ref={fileRef} type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleExtractFile} />
         <input ref={importCsvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImportCsvFile} />
         <input ref={importJsonRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJsonFile} />
       </div>
-      {/* View toggle sits directly under the heading */}
-      <div style={{ display: 'flex', gap: 0, background: '#f3f4f6', borderRadius: 12, padding: 3, marginBottom: 10 }}>
-        {[
-          { id: 'table',    icon: Table2,        label: 'Table'    },
-          { id: 'summary',  icon: TrendingUp,    label: 'Summary'  },
-          { id: 'chat',     icon: MessageSquare, label: 'Chat'     },
-          { id: 'settings', icon: Settings2,     label: 'Settings' },
-        ].map(v => (
-          <button key={v.id} onClick={() => setView(v.id)} style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
-            padding: '7px 4px', borderRadius: 9, border: 'none', cursor: 'pointer', fontFamily: MONO,
-            fontSize: 10, fontWeight: 600, transition: 'all 0.15s',
-            background: view === v.id ? '#fff' : 'transparent',
-            color: view === v.id ? '#1a1a1a' : '#9ca3af',
-            boxShadow: view === v.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-          }}>
-            <v.icon size={13} /><span>{v.label}</span>
-          </button>
-        ))}
-      </div>
+      {showViewToggle && (
+        <div style={{ display: 'flex', gap: 0, background: '#f3f4f6', borderRadius: 12, padding: 3, marginBottom: 10 }}>
+          {[
+            { id: 'table',    icon: Table2,        label: 'Table'    },
+            { id: 'summary',  icon: TrendingUp,    label: 'Summary'  },
+            { id: 'statistics', icon: ClipboardList, label: 'Statistics' },
+            { id: 'chat',     icon: MessageSquare, label: 'Chat'     },
+            { id: 'settings', icon: Settings2,     label: 'Settings' },
+          ].map(v => (
+            <button key={v.id} onClick={() => setView(v.id)} style={{
+              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
+              padding: '7px 4px', borderRadius: 9, border: 'none', cursor: 'pointer', fontFamily: MONO,
+              fontSize: 10, fontWeight: 600, transition: 'all 0.15s',
+              background: activeView === v.id ? '#fff' : 'transparent',
+              color: activeView === v.id ? '#1a1a1a' : '#9ca3af',
+              boxShadow: activeView === v.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+            }}>
+              <v.icon size={13} /><span>{v.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 
-  const DatePills = view === 'summary' ? (
+  const DatePills = (activeView === 'summary' || activeView === 'statistics') ? (
     <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
       {summaryMonths.map(m => (
         <button key={m} style={S.pill(m === selSummaryMonth)} onClick={() => setSelSummaryMonth(m)}>
@@ -1029,7 +1258,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     </div>
   ) : (
     <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
-      {view === 'table' && (
+      {activeView === 'table' && (
         <button
           style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
           onClick={() => {
@@ -1049,11 +1278,18 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   );
 
   // Collapsible rates bar
-  const ratesForBar = view === 'summary' ? getRatesForMonth(selSummaryMonth) : (selDate ? dateRates[selDate] : null);
-  const ratesBarLabel = view === 'summary'
-    ? `Rates for ${selSummaryMonth ? new Date(selSummaryMonth + '-02').toLocaleDateString('en', { month: 'short', year: 'numeric' }) : ''} (historical)`
-    : `Rates for ${fmtDate(selDate)} (historical)`;
-  const RatesBar = ratesForBar && Object.keys(ratesForBar).length > 1 ? (
+  const ratesForBar = (activeView === 'summary' || activeView === 'statistics') ? getRatesForMonth(selSummaryMonth) : (selDate ? dateRates[selDate] : null);
+  const ratesBarEntries = ratesForBar
+    ? Object.entries(ratesForBar).filter(([cur]) => (
+        (activeView === 'summary' || activeView === 'statistics')
+          ? cur !== 'HKD'
+          : tableRateCurrencies.includes(cur)
+      ))
+    : [];
+  const ratesBarLabel = (activeView === 'summary' || activeView === 'statistics')
+    ? `Rates for ${selSummaryMonth ? new Date(selSummaryMonth + '-02').toLocaleDateString('en', { month: 'short', year: 'numeric' }) : ''}`
+    : `Rates for ${fmtDate(selDate)}`;
+  const RatesBar = ratesForBar && ratesBarEntries.length > 0 ? (
     <div style={{ padding: '0 16px 8px' }}>
       <button onClick={() => setShowRatesFor(v => !v)}
         style={{ ...S.btnGhost, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
@@ -1062,7 +1298,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       </button>
       {showRatesFor && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 2px 4px' }}>
-          {Object.entries(ratesForBar).filter(([c]) => c !== 'HKD').map(([cur, rate]) => (
+          {ratesBarEntries.map(([cur, rate]) => (
             <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: 6 }}>
               1 {cur} = {rate.toFixed(2)} HKD
             </span>
@@ -1083,16 +1319,12 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     const histRates = (!isCurrent && !isNew && !isToday && selDate) ? dateRates[selDate] : null;
     const isHistorical = isCurrent || (!!selDate && !isToday && !isNew);
     const activeRates = histRates || appToHKD();
-    const usedCurrencies = [...new Set(
-      accounts
-        .filter(a => bal(a.id, selDate) != null && a.currency !== displayCurrency && a.currency !== 'PTS')
-        .map(a => a.currency)
-    )].sort();
+    const usedCurrencies = tableRateCurrencies;
 
     return (
     <div style={{ padding: '0 16px' }}>
       {/* Edit mode toggle */}
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         <button onClick={() => setShowEdits(v => !v)} style={{
           ...S.btnGhost, padding: '5px 12px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4,
           background: showEdits ? '#eff6ff' : undefined, borderColor: showEdits ? '#93c5fd' : undefined, color: showEdits ? '#1d4ed8' : undefined,
@@ -1104,7 +1336,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       {/* Live rates — shown when in new/today mode */}
       {(isToday || isNew) && (() => {
         const liveRates = appToHKD();
-        const entryCurrencies = [...new Set(accounts.filter(a => a.currency !== 'HKD' && a.currency !== 'PTS').map(a => a.currency))].sort();
+        const entryCurrencies = tableRateCurrencies;
         if (!entryCurrencies.length) return null;
         return (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center', padding: '0 2px' }}>
@@ -1122,7 +1354,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       {usedCurrencies.length > 0 && selDate && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
           <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>
-            Rates ({isHistorical ? 'hist.' : 'live'})
+            Rates
           </span>
           {usedCurrencies.map(cur => {
             const rate = cvtHKD(1, cur, displayCurrency, activeRates);
@@ -1143,11 +1375,30 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       {/* Account rows grouped by bank */}
       {[...new Set(accounts.map(a => a.bank))].sort().map(bank => {
         const bankAccs = accounts.filter(a => a.bank === bank).sort((a, b) => a.sort_order - b.sort_order || a.account_name.localeCompare(b.account_name));
+        const showDormantForBank = expandedDormantBanks.has(bank);
+        const visibleBankAccs = bankAccs.filter((acc) => !isAccountDormant(acc) || showDormantForBank);
+        const hiddenCount = bankAccs.filter((acc) => isAccountDormant(acc)).length;
         return (
           <div key={bank} style={{ marginBottom: 14 }}>
-            <div style={{ ...S.label, marginBottom: 5, paddingLeft: 2 }}>{bank}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, paddingLeft: 2 }}>
+              <div style={{ ...S.label, marginBottom: 0 }}>{bank}</div>
+              {hiddenCount > 0 && (
+                <button
+                  onClick={() => setExpandedDormantBanks((curr) => {
+                    const next = new Set(curr);
+                    if (next.has(bank)) next.delete(bank);
+                    else next.add(bank);
+                    return next;
+                  })}
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}
+                >
+                  {showDormantForBank ? `hide ${hiddenCount}` : `${hiddenCount} hidden`}
+                </button>
+              )}
+            </div>
+            {visibleBankAccs.length > 0 && (
             <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-              {bankAccs.map((acc, i) => {
+              {visibleBankAccs.map((acc, i) => {
                 const savedBal = effectiveDate ? bal(acc.id, effectiveDate) : null;
                 const miles = acc.category === 'Points/Miles' && savedBal != null && acc.metadata?.miles_ratio
                   ? Math.round(savedBal / acc.metadata.miles_ratio * 1000) : null;
@@ -1155,7 +1406,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                 const displayDate = autoSaveStatus[acc.id] === 'saved' ? effectiveDate : latestSnap?.snapshot_date;
                 const isEditing = editingAccId === acc.id;
                 return (
-                  <div key={acc.id} style={{ borderBottom: i < bankAccs.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
+                  <div key={acc.id} style={{ borderBottom: i < visibleBankAccs.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
                     {/* Normal row */}
                     <div style={{
                       display: 'grid', gridTemplateColumns: showEdits ? '44px 1fr auto auto 110px' : '1fr auto auto 110px',
@@ -1173,8 +1424,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                               style={{ background: 'none', border: 'none', cursor: i === 0 ? 'default' : 'pointer', padding: '1px 2px', color: i === 0 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
                               ▲
                             </button>
-                            <button onClick={() => reorderAcc(bank, acc.id, 1)} disabled={i === bankAccs.length - 1}
-                              style={{ background: 'none', border: 'none', cursor: i === bankAccs.length - 1 ? 'default' : 'pointer', padding: '1px 2px', color: i === bankAccs.length - 1 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
+                            <button onClick={() => reorderAcc(bank, acc.id, 1)} disabled={i === visibleBankAccs.length - 1}
+                              style={{ background: 'none', border: 'none', cursor: i === visibleBankAccs.length - 1 ? 'default' : 'pointer', padding: '1px 2px', color: i === visibleBankAccs.length - 1 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
                               ▼
                             </button>
                           </div>
@@ -1184,7 +1435,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                         <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: '#111' }}>
                           {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
                         </div>
-                        <div style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={S.catBadge(acc.category)}>{acc.category}</span>
                           {miles != null && <span style={{ color: '#06b6d4' }}>≈ {miles.toLocaleString()} mi</span>}
                         </div>
@@ -1271,6 +1522,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                 );
               })}
             </div>
+            )}
           </div>
         );
       })}
@@ -1283,7 +1535,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
       {selDate && selDate !== 'current' && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: -60, marginBottom: 90 }}>
           <button onClick={() => setConfirmDeleteSnap(true)}
-            style={{ ...S.btnGhost, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#9ca3af' }}>
+            style={{ ...S.btnGhost, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#9ca3af' }}>
             <Trash2 size={12} /> Delete snapshot ({fmtDate(selDate)})
           </button>
         </div>
@@ -1293,6 +1545,91 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
   })();
 
   /* ── SUMMARY VIEW ── */
+  const analysisRows = useMemo(() => {
+    const ascMonths = [...summaryMonths].slice().sort();
+    const expectedByMonth = new Map();
+    const expectedBaseMonth = expectedNetAssetBaseMonth || DEFAULT_EXPECTED_NET_ASSET_BASE_MONTH;
+    const parsedExpectedBaseValue = Number(expectedNetAssetBaseValue);
+    const expectedBaseValue = Number.isFinite(parsedExpectedBaseValue)
+      ? parsedExpectedBaseValue
+      : DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE;
+    let rollingExpected = null;
+    for (const month of ascMonths) {
+      const monthCash = catTotalForMonth('Cash', month);
+      const monthSec = catTotalForMonth('Securities', month);
+      const monthCC = catTotalForMonth('Credit Card', month);
+      const monthLoan = catTotalForMonth('Loan', month);
+      const monthIncomeOld = catTotalForMonth('Income', month);
+      const monthExpenseOld = catTotalForMonth('Expense', month);
+      const monthProp = catTotalForMonth('Property', month);
+      const hs = homeMonthlyStats[month];
+      const hsCur = hs?.currency || displayCurrency;
+      const homeIncome = hs ? cvtHKD(hs.income, hsCur, displayCurrency, getRatesForMonth(month)) : 0;
+      const homeExpense = hs ? cvtHKD(hs.expense, hsCur, displayCurrency, getRatesForMonth(month)) : 0;
+      const monthIncome = monthIncomeOld + homeIncome;
+      const monthExpense = monthExpenseOld + homeExpense;
+      const monthNetIncome = monthIncome - monthExpense;
+      const monthNetWorth = monthCash + monthSec - monthCC;
+      const monthNetProperty = monthProp - monthLoan;
+      const monthNetAsset = monthNetWorth + monthNetProperty;
+
+      if (month < expectedBaseMonth) {
+        expectedByMonth.set(month, null);
+      } else if (month === expectedBaseMonth) {
+        rollingExpected = expectedBaseValue;
+        expectedByMonth.set(month, rollingExpected);
+      } else if (rollingExpected != null) {
+        rollingExpected += monthNetIncome;
+        expectedByMonth.set(month, rollingExpected);
+      } else {
+        expectedByMonth.set(month, null);
+      }
+    }
+
+    return summaryMonths.map((month) => {
+      const monthCash = catTotalForMonth('Cash', month);
+      const monthSec = catTotalForMonth('Securities', month);
+      const monthCC = catTotalForMonth('Credit Card', month);
+      const monthLoan = catTotalForMonth('Loan', month);
+      const monthIncomeOld = catTotalForMonth('Income', month);
+      const monthExpenseOld = catTotalForMonth('Expense', month);
+      const monthProp = catTotalForMonth('Property', month);
+      const hs = homeMonthlyStats[month];
+      const hsCur = hs?.currency || displayCurrency;
+      const homeIncome = hs ? cvtHKD(hs.income, hsCur, displayCurrency, getRatesForMonth(month)) : 0;
+      const homeExpense = hs ? cvtHKD(hs.expense, hsCur, displayCurrency, getRatesForMonth(month)) : 0;
+      const monthIncome = monthIncomeOld + homeIncome;
+      const monthExpense = monthExpenseOld + homeExpense;
+      const monthNetIncome = monthIncome - monthExpense;
+      const monthNetWorth = monthCash + monthSec - monthCC;
+      const monthNetProperty = monthProp - monthLoan;
+      const monthNetAsset = monthNetWorth + monthNetProperty;
+      return {
+        month,
+        netAsset: monthNetAsset,
+        netWorth: monthNetWorth,
+        netProperty: monthNetProperty,
+        netIncome: monthNetIncome,
+        cash: monthCash,
+        securities: monthSec,
+        creditCard: monthCC,
+        income: monthIncome,
+        expense: monthExpense,
+        inflationRate: usInflationRates[month] ?? null,
+        expectedNetAsset: expectedByMonth.get(month),
+      };
+    });
+  }, [
+    summaryMonths,
+    expectedNetAssetBaseMonth,
+    expectedNetAssetBaseValue,
+    catTotalForMonth,
+    homeMonthlyStats,
+    displayCurrency,
+    getRatesForMonth,
+    usInflationRates,
+  ]);
+
   const SummaryView = (() => {
     const Delta = ({ cur, prev }) => {
       if (prev == null || prev === 0) return null;
@@ -1317,6 +1654,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     const prop    = catTotalForMonth('Property',    sm);
     const netWorth    = cash + sec - cc;
     const netProperty = prop - loan;
+    const netAsset    = netWorth + netProperty;
     const netIncome   = income - expense;
     const prevCash    = pm ? catTotalForMonth('Cash',        pm) : null;
     const prevSec     = pm ? catTotalForMonth('Securities',  pm) : null;
@@ -1327,6 +1665,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     const prevProp    = pm ? catTotalForMonth('Property',    pm) : null;
     const prevNetWorth    = pm ? (prevCash + prevSec - prevCC) : null;
     const prevNetProperty = pm ? (prevProp - prevLoan) : null;
+    const prevNetAsset    = pm ? (prevNetWorth + prevNetProperty) : null;
     const prevNetIncome   = pm ? (prevIncome - prevExpense) : null;
 
     return (
@@ -1342,7 +1681,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
             return (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
+                <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>{row.label}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {diff != null && (
                     <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -1358,7 +1697,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
           })}
           {/* Net Worth = Cash + Securities - CC */}
           <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>Net Worth</span>
+            <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>Net Worth</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               {prevNetWorth != null && (
                 <span style={{ fontFamily: MONO, fontSize: 10, color: (netWorth - prevNetWorth) >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -1368,6 +1707,19 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
               )}
               <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#16a34a' : '#dc2626' }}>
                 {fmtNum(netWorth, displayCurrency)}
+              </span>
+            </div>
+          </div>
+          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>Net Asset</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {prevNetAsset != null && (
+                <span style={{ fontFamily: MONO, fontSize: 10, color: (netAsset - prevNetAsset) >= 0 ? '#16a34a' : '#dc2626' }}>
+                  {(netAsset - prevNetAsset) >= 0 ? '+' : ''}{fmtNum(netAsset - prevNetAsset, displayCurrency)}
+                </span>
+              )}
+              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netAsset >= 0 ? '#16a34a' : '#dc2626' }}>
+                {fmtNum(netAsset, displayCurrency)}
               </span>
             </div>
           </div>
@@ -1381,7 +1733,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                 const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
                 return (
                   <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>{row.label}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {diff != null && (
                         <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -1431,7 +1783,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                   const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
                   return (
                     <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>{row.label}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>{row.label}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {diff != null && (
                           <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -1489,11 +1841,11 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                       {(totalDisp - prevTotalDisp) >= 0 ? '+' : ''}{fmtNum(totalDisp - prevTotalDisp, displayCurrency)}
                     </span>
                   )}
-                  <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700,
+                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700,
                     color: (cat === 'Credit Card' || cat === 'Expense' || cat === 'Loan') ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
                     {fmtNum(totalDisp, displayCurrency)}
                   </span>
-                  <Delta cur={totalDisp} prev={prevTotalDisp} />
+                  {!['Cash', 'Securities', 'Credit Card'].includes(cat) && <Delta cur={totalDisp} prev={prevTotalDisp} />}
                 </div>
               </button>
 
@@ -1543,7 +1895,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                           return (
                             <div key={acc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '2px 0 2px 8px', borderLeft: `2px solid ${(CAT_COLOR[cat] || '#9ca3af')}30` }}>
                               <span style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>{acc.bank} · {acc.account_name}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: '#374151' }}>
+                              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: '#374151' }}>
                                 {fmtNum(b, cur)}{miles ? ` · ${miles.toLocaleString()}mi` : ''}
                               </span>
                             </div>
@@ -1565,7 +1917,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                         {prevTotalDisp != null && (
                           <span style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevTotalDisp, displayCurrency)}</span>
                         )}
-                        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>{fmtNum(totalDisp, displayCurrency)}</span>
+                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{fmtNum(totalDisp, displayCurrency)}</span>
                       </div>
                     </div>
                   )}
@@ -1579,11 +1931,151 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     );
   })();
 
+  const StatisticsView = (
+    <div style={{ padding: '0 16px 80px' }}>
+      <div style={{ ...S.card, padding: 0, overflow: 'hidden' }}>
+        <div style={{ ...S.label, color: '#9ca3af', padding: '14px 16px 0' }}>Analysis ({displayCurrency})</div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 12px 0' }}>
+          <button
+            onClick={() => {
+              const el = document.getElementById('portfolio-analysis-table');
+              el?.scrollBy({ left: -240, behavior: 'smooth' });
+            }}
+            style={{ ...S.btnGhost, padding: '5px 10px', minWidth: 0 }}
+          >
+            ←
+          </button>
+          <button
+            onClick={() => {
+              const el = document.getElementById('portfolio-analysis-table');
+              el?.scrollBy({ left: 240, behavior: 'smooth' });
+            }}
+            style={{ ...S.btnGhost, padding: '5px 10px', minWidth: 0 }}
+          >
+            →
+          </button>
+        </div>
+        <div id="portfolio-analysis-table" style={{ overflowX: 'auto', paddingTop: 8 }}>
+          <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: 'max-content', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 68 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 80 }} />
+            </colgroup>
+            <thead>
+              <tr style={{ background: '#fafaf8' }}>
+                {[
+                  { top: 'Month', bottom: '' },
+                  { top: 'Net', bottom: 'Asset' },
+                  { top: 'Net', bottom: 'Worth' },
+                  { top: 'Net', bottom: 'Property' },
+                  { top: 'Net', bottom: 'Income' },
+                  { top: 'Cash', bottom: '' },
+                  { top: 'Securities', bottom: '' },
+                  { top: 'Credit', bottom: 'Card' },
+                  { top: 'Income', bottom: '' },
+                  { top: 'Expense', bottom: '' },
+                  { top: 'Inflation', bottom: '' },
+                  { top: 'Expected', bottom: 'Net Asset' },
+                ].map((label, index) => (
+                  <th
+                    key={`${label.top}-${label.bottom}`}
+                    style={{
+                      ...S.label,
+                      textAlign: 'left',
+                      padding: '5px 4px',
+                      borderBottom: '1px solid #ece7df',
+                      fontSize: 10,
+                      lineHeight: 1.2,
+                      opacity: 1,
+                      color: '#111827',
+                      position: index === 0 ? 'sticky' : 'static',
+                      left: index === 0 ? 0 : 'auto',
+                      zIndex: index === 0 ? 3 : 1,
+                      background: '#fafaf8',
+                    }}
+                  >
+                    <div style={{ display: 'grid', gap: 2, width: '100%' }}>
+                      {label.bottom ? (
+                        <>
+                          <div>{label.top}</div>
+                          <div style={{ height: 1, background: '#d6d3d1', width: '100%' }} />
+                          <div>{label.bottom}</div>
+                        </>
+                      ) : (
+                        <div>{label.top}</div>
+                      )}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {analysisRows.map((row) => (
+                <tr key={row.month} style={{ borderBottom: '1px solid #f1ede5' }}>
+                  <td style={{ padding: '5px 4px', verticalAlign: 'middle', position: 'sticky', left: 0, background: '#fff', zIndex: 2, boxShadow: '8px 0 14px -12px rgba(15,23,42,0.22)' }}>
+                    <div style={{ fontWeight: 700, fontSize: 10, lineHeight: 1.15 }}>
+                      {new Date(`${row.month}-02`).toLocaleDateString('en', { month: 'short', year: 'numeric' })}
+                    </div>
+                  </td>
+                  {[
+                    { value: row.netAsset, color: row.netAsset >= 0 ? '#16a34a' : '#dc2626' },
+                    { value: row.netWorth, color: row.netWorth >= 0 ? '#16a34a' : '#dc2626' },
+                    { value: row.netProperty, color: row.netProperty >= 0 ? '#16a34a' : '#dc2626' },
+                    { value: row.netIncome, color: row.netIncome >= 0 ? '#16a34a' : '#dc2626' },
+                    { value: row.cash, color: '#111827' },
+                    { value: row.securities, color: '#111827' },
+                    { value: row.creditCard, color: '#dc2626' },
+                    { value: row.income, color: '#16a34a' },
+                    { value: row.expense, color: '#dc2626' },
+                    { value: row.inflationRate, color: '#111827', format: 'pct' },
+                    { value: row.expectedNetAsset, color: '#111827' },
+                  ].map((cell, index) => (
+                    <td key={`${row.month}-${index}`} style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
+                      <div style={{ fontWeight: 700, color: cell.color, lineHeight: 1.1, fontSize: 10 }}>
+                        {cell.value == null ? '—' : cell.format === 'pct' ? fmtPct(cell.value * 100) : fmtNum(cell.value, displayCurrency)}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: '10px 12px 12px', borderTop: '1px solid #f1ede5', fontSize: 10, lineHeight: 1.55, color: '#6b7280' }}>
+          <div>Net Asset = Net Worth + Net Property</div>
+          <div>Expected Net Asset starts at {fmtNum(Number(expectedNetAssetBaseValue || DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE), displayCurrency)} in {expectedNetAssetBaseMonth || DEFAULT_EXPECTED_NET_ASSET_BASE_MONTH} and adds each month&apos;s Net Income after that.</div>
+          <div>Inflation uses U.S. CPI monthly change from the U.S. Bureau of Labor Statistics; unreleased months stay blank.</div>
+        </div>
+      </div>
+    </div>
+  );
+
 
   /* ── CHAT VIEW ── */
   const ChatView = (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 260px)', padding: '0 16px' }}>
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100dvh - 210px)', padding: '0 16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', paddingBottom: 12 }}>
+        <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
+          style={{ fontFamily: MONO, fontSize: 12, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '7px 10px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
+          {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <button onClick={() => fileRef.current?.click()} disabled={extracting}
+          style={{ ...S.btnGhost, padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 5, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10 }}>
+          {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
+          <span style={{ fontSize: 12 }}>Scan</span>
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 148 }}>
         {chatMessages.map((msg, i) => (
           <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
             <div style={{
@@ -1603,13 +2095,24 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
         )}
         <div ref={chatEndRef} />
       </div>
-      <div style={{ display: 'flex', gap: 8, paddingTop: 8, paddingBottom: 80 }}>
-        <input value={chatInput} onChange={e => setChatInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendChat()}
-          placeholder="Ask about your finances…" style={{ ...S.input, flex: 1 }} />
-        <button onClick={sendChat} disabled={chatLoading} style={{ ...S.btnDark, padding: '9px 14px' }}>
-          <Send size={14} />
-        </button>
+      <div style={{
+        position: 'fixed',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        bottom: 'calc(78px + env(safe-area-inset-bottom, 0px))',
+        width: 'min(448px, calc(100vw - 32px))',
+        padding: '10px 16px 0',
+        background: 'linear-gradient(to top, #f8f9fa 78%, rgba(248,249,250,0.0))',
+        zIndex: 35,
+      }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input value={chatInput} onChange={e => setChatInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendChat()}
+            placeholder="Ask about finances or a live stock price…" style={{ ...S.input, flex: 1, background: '#fff', borderRadius: 16, padding: '12px 16px', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }} />
+          <button onClick={sendChat} disabled={chatLoading} style={{ ...S.btnDark, width: 'auto', minWidth: 54, padding: '12px 14px', borderRadius: 16, boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}>
+            <Send size={14} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1677,6 +2180,44 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
         <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Leave blank to use your own membership display name in that list.</div>
       </div>
 
+      <div style={S.card}>
+        <div style={{ ...S.label, marginBottom: 8 }}>Expected Net Asset</div>
+        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>Base Month</div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <input
+            type="month"
+            value={expectedNetAssetBaseMonth}
+            onChange={e => setExpectedNetAssetBaseMonth(e.target.value)}
+            style={{ ...S.input, flex: 1 }}
+          />
+          <button
+            onClick={() => saveUserSetting('expected_net_asset_base_month', expectedNetAssetBaseMonth).then(() => showToast?.('Saved'))}
+            style={{ ...S.btnDark, padding: '8px 14px' }}
+          >
+            <Check size={14} />
+          </button>
+        </div>
+        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>Base Value</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="number"
+            value={expectedNetAssetBaseValue}
+            onChange={e => setExpectedNetAssetBaseValue(e.target.value)}
+            placeholder="19000000"
+            style={{ ...S.input, flex: 1 }}
+          />
+          <button
+            onClick={() => saveUserSetting('expected_net_asset_base_value', String(expectedNetAssetBaseValue || DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE)).then(() => showToast?.('Saved'))}
+            style={{ ...S.btnDark, padding: '8px 14px' }}
+          >
+            <Check size={14} />
+          </button>
+        </div>
+        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>
+          Future months calculate automatically from this starting month and add each month&apos;s Net Income after that.
+        </div>
+      </div>
+
       {/* Data management */}
       <div style={S.card}>
         <div style={{ ...S.label, marginBottom: 12 }}>Data Management</div>
@@ -1713,7 +2254,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
             style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Statement Extraction Review</div>
+              <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>Statement Extraction Review</div>
               <button onClick={() => setPendingExtraction(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             {/* Date */}
@@ -1729,8 +2270,8 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
             {pendingExtraction.items.map((item, idx) => (
               <div key={idx} style={{ background: item.matched_account_id ? '#f0fdf4' : '#fafafa', border: `1px solid ${item.matched_account_id ? '#bbf7d0' : '#e5e7eb'}`, borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 11, color: '#6b7280', minWidth: 80 }}>{item.type}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600 }}>{item.currency} {Number(item.balance).toLocaleString()}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', minWidth: 80 }}>{item.type}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>{item.currency} {Number(item.balance).toLocaleString()}</span>
                   {item.account_number && <span style={{ fontFamily: MONO, fontSize: 10, color: '#9ca3af' }}>···{item.account_number}</span>}
                 </div>
                 <select value={item.matched_account_id}
@@ -1747,7 +2288,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
               </div>
             ))}
             <button onClick={() => setShowRaw(v => !v)}
-              style={{ ...S.btnGhost, width: '100%', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              style={{ ...S.btnGhost, width: '100%', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
               <ChevronDown size={11} style={{ transform: showRaw ? 'none' : 'rotate(-90deg)' }} />
               Raw Grok response
             </button>
@@ -1773,7 +2314,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
             style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 480 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Import Preview</div>
+              <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>Import Preview</div>
               <button onClick={() => setImportPreview(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <div style={{ fontFamily: MONO, fontSize: 12, color: '#374151', marginBottom: 8 }}>
@@ -1785,7 +2326,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
                 </span>
               )}
             </div>
-            <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 16, fontFamily: MONO, fontSize: 11, color: '#6b7280' }}>
+            <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 16, fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>
               {importPreview.accounts?.slice(0, 10).map((a, i) => (
                 <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid #f3f4f6' }}>
                   {a.bank} / {a.account_name} ({a.currency}, {a.category})
@@ -1814,7 +2355,7 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
             style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 480 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <div style={{ ...S.label, fontSize: 13, color: '#1a1a1a' }}>Add Account</div>
+              <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>Add Account</div>
               <button onClick={() => setShowAddAcc(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1954,13 +2495,14 @@ export default function FinancesTab({ user, sb, showToast, rates, balanceTxns, b
     <div className="se" style={{ fontFamily: MONO, maxWidth: 480, margin: '0 auto', minHeight: '100vh', background: '#f8f9fa' }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       {TopBar}
-      {(view === 'table' || view === 'summary') && DatePills}
-      {(view === 'table' || view === 'summary') && RatesBar}
+      {(activeView === 'table' || activeView === 'summary' || activeView === 'statistics') && DatePills}
+      {(activeView === 'table' || activeView === 'summary' || activeView === 'statistics') && RatesBar}
       <div style={{ overflowY: 'auto' }}>
-        {view === 'table'   && TableView}
-        {view === 'summary' && SummaryView}
-        {view === 'chat'    && ChatView}
-        {view === 'settings'&& SettingsView}
+        {activeView === 'table'   && TableView}
+        {activeView === 'summary' && SummaryView}
+        {activeView === 'statistics' && StatisticsView}
+        {activeView === 'chat'    && ChatView}
+        {activeView === 'settings'&& SettingsView}
       </div>
       {Modals}
     </div>

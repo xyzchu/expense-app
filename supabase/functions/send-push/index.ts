@@ -199,6 +199,42 @@ serve(async (req) => {
   try {
     const { list_id, sender_user_id, title, body, tag, target_user_id } = await req.json();
 
+    const authHeader = req.headers.get('Authorization');
+    const authedClient = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      {
+        global: {
+          headers: authHeader ? { Authorization: authHeader } : {},
+        },
+      }
+    );
+    const {
+      data: { user },
+      error: userError,
+    } = await authedClient.auth.getUser();
+
+    if (userError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { data: membership } = await authedClient
+      .from('list_members')
+      .select('list_id')
+      .eq('list_id', list_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!membership) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
