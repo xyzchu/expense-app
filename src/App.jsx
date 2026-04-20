@@ -16,7 +16,7 @@ import sb from './supabaseClient';
 import FinancesTab from './FinancesTab';
 import TransactionsTab from './TransactionsTab';
 import SecuritiesStatisticsTab from './SecuritiesStatisticsTab';
-import GrilldTab from './GrilldTab';
+import ShopperTab from './ShopperTab';
 import { usePushNotifications } from './usePushNotifications';
 
 /* ══════════════════════════════════════════════════════════════
@@ -2963,9 +2963,9 @@ const HomeTab = () => (
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
       {isAppOwner && tab === 'investing' && InvestingTab()}
-      {tab === 'grilld' && <GrilldTab />}
+      {tab === 'shopper' && <ShopperTab />}
 
-      {tab !== 'investing' && tab !== 'grilld' && (
+      {tab !== 'investing' && tab !== 'shopper' && (
         <div style={{
           textAlign:'center',
           padding:'16px 16px 80px',
@@ -2987,7 +2987,7 @@ const HomeTab = () => (
           {id:'home',icon:HomeIcon,label:'Home'},
           {id:'stats',icon:BarChart3,label:'Stats'},
           ...(isAppOwner ? [{id:'investing',icon:TrendingUp,label:'Investing'}] : []),
-          {id:'grilld',icon:()=><span style={{fontSize:16}}>🥩</span>,label:"Grill'd"},
+          {id:'shopper',icon:()=><span style={{fontSize:16}}>🛍️</span>,label:'Shopper'},
           {id:'settings',icon:SettingsIcon,label:'Settings'},
         ].map(t=>(
           <button key={t.id} onClick={()=>{setTab(t.id);setEditingId(null);}}
