@@ -477,7 +477,8 @@ export default function SplitEase() {
   const { supported: pushSupported, permission: pushPermission, subscribed: pushSubscribed,
           loading: pushLoading, subscribe: pushSubscribe, unsubscribe: pushUnsubscribe,
           sendNotification } = usePushNotifications(user, currentList, showToast);
-  const isAppOwner = user?.email === APP_OWNER_EMAIL;
+  const [permissions, setPermissions] = useState(new Set());
+  const can = (f) => permissions.has(f);
 
   /* ── Auth Effects ── */
   useEffect(() => {
@@ -493,8 +494,16 @@ export default function SplitEase() {
   }, []);
 
   useEffect(() => {
-    if (!isAppOwner && tab === 'investing') setTab('home');
-  }, [isAppOwner, tab]);
+    if (!can('investing') && tab === 'investing') setTab('home');
+    if (!can('shopper')   && tab === 'shopper')   setTab('home');
+  }, [permissions, tab]);
+
+  /* ── Fetch Permissions ── */
+  useEffect(() => {
+    if (!user) { setPermissions(new Set()); return; }
+    sb.from('user_permissions').select('feature').eq('user_id', user.id)
+      .then(({ data }) => setPermissions(new Set((data || []).map(r => r.feature))));
+  }, [user]);
 
   /* ── Fetch Lists ── */
   useEffect(() => {
@@ -2692,7 +2701,7 @@ const HomeTab = () => (
         </div>
       )}
 
-      {isAppOwner && (
+      {can('webhook') && (
         <div style={{...s.card,marginBottom:12}}>
           <div style={{...s.label,marginBottom:8}}>Auto-Add from Bank Notifications</div>
           <div style={{fontSize: 12,opacity:0.5,lineHeight:1.6,marginBottom:10}}>
@@ -2962,7 +2971,7 @@ const HomeTab = () => (
       {tab === 'home' && HomeTab()}
       {tab === 'stats' && StatsTab()}
       {tab === 'settings' && SettingsTab()}
-      {isAppOwner && tab === 'investing' && InvestingTab()}
+      {can('investing') && tab === 'investing' && InvestingTab()}
       {tab === 'shopper' && <ShopperTab />}
 
       {tab !== 'investing' && tab !== 'shopper' && (
@@ -2986,8 +2995,8 @@ const HomeTab = () => (
         {[
           {id:'home',icon:HomeIcon,label:'Home'},
           {id:'stats',icon:BarChart3,label:'Stats'},
-          ...(isAppOwner ? [{id:'investing',icon:TrendingUp,label:'Investing'}] : []),
-          {id:'shopper',icon:()=><span style={{fontSize:16}}>🛍️</span>,label:'Shopper'},
+          ...(can('investing') ? [{id:'investing',icon:TrendingUp,label:'Investing'}] : []),
+          ...(can('shopper')   ? [{id:'shopper',icon:()=><span style={{fontSize:16}}>🛍️</span>,label:'Shopper'}] : []),
           {id:'settings',icon:SettingsIcon,label:'Settings'},
         ].map(t=>(
           <button key={t.id} onClick={()=>{setTab(t.id);setEditingId(null);}}
