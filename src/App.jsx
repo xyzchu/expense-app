@@ -501,7 +501,7 @@ export default function SplitEase() {
   /* ── Fetch Permissions ── */
   useEffect(() => {
     if (!user) { setPermissions(new Set()); return; }
-    sb.from('user_permissions').select('feature').eq('user_id', user.id)
+    sb.from('user_permissions').select('feature').eq('email', user.email)
       .then(({ data }) => setPermissions(new Set((data || []).map(r => r.feature))));
   }, [user]);
 
@@ -2765,6 +2765,27 @@ const HomeTab = () => (
           <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>gift 50 70% Alice</code> — 70% Alice, rest split</div>
         </div>
       </div>
+
+      {/* Permissions note — only visible to app owner */}
+      {user?.email === APP_OWNER_EMAIL && (
+        <div style={{...s.card,marginBottom:12,borderLeft:'3px solid #e5e7eb'}}>
+          <div style={{...s.label,marginBottom:8}}>Feature Permissions</div>
+          <div style={{fontSize:12,opacity:0.5,lineHeight:1.8,marginBottom:10}}>
+            Manage which users can access restricted features via the Supabase Table Editor.
+          </div>
+          <div style={{fontSize:11,lineHeight:2,opacity:0.6}}>
+            <div>1. Go to <strong style={{opacity:1}}>supabase.com</strong> → your project</div>
+            <div>2. Table Editor → <code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,color:'#1a1a1a',opacity:1}}>user_permissions</code></div>
+            <div>3. Insert a row with the user's <strong style={{opacity:1}}>email</strong> and one of:</div>
+            <div style={{paddingLeft:12,marginTop:2,display:'flex',flexDirection:'column',gap:4}}>
+              {['investing','webhook','shopper'].map(f => (
+                <code key={f} style={{background:'#F0F0EA',padding:'2px 8px',borderRadius:4,color:'#1a1a1a',opacity:1,display:'inline-block',width:'fit-content'}}>{f}</code>
+              ))}
+            </div>
+            <div style={{marginTop:6}}>4. Delete the row to revoke access.</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
