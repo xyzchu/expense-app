@@ -4,7 +4,7 @@ import { Download } from 'lucide-react';
 const MONO = '"IBM Plex Mono", monospace';
 const sq = s => ({ fontFamily: MONO, ...s });
 const inputBase = {
-  fontFamily: MONO, fontSize: 13,
+  fontFamily: MONO, fontSize: 16,
   border: '1px solid #e5e7eb', borderRadius: 8,
   padding: '6px 10px', outline: 'none',
   background: '#fafafa', color: '#1a1a1a', width: '100%',
