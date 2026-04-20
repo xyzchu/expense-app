@@ -49,7 +49,7 @@ export default function ChecklistPage({ storageKey, title, subtitle, filename, i
   };
 
   const cross = (id) => {
-    setVal(id, 'No');
+    if (!values[id]) setVal(id, 'No');
   };
 
   const exportTxt = () => {
