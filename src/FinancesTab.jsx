@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Plus, Trash2, X, Eye, EyeOff, Upload, ChevronDown,
+  Plus, Trash2, Eye, EyeOff, Upload, ChevronDown,
   MessageSquare, Table2, Settings2, Send, RefreshCw, Check, ClipboardList,
   TrendingUp, TrendingDown, Copy, Download, Pencil, AlertTriangle
 } from 'lucide-react';
+import { MONO, FS, FW, CLAY } from './theme';
+import { useIsWide } from './hooks';
+import {
+  DataTableHeaderLabel, ModalHeader, SegmentedTabs, UI, modalBackdropStyle, modalSurfaceStyle,
+  tableCellStyle, tableHeaderCellStyle, tableHeaderRowStyle, tableRowStyle, tableStyle
+} from './ui';
 
 /* ─── constants ─────────────────────────────────────────────────── */
-const MONO = '"IBM Plex Mono", monospace';
 const CATS = ['Cash', 'Securities', 'Credit Card', 'Loan', 'Income', 'Expense', 'Points/Miles', 'Property', 'Others'];
 const CAT_COLOR = {
   Cash: '#3b82f6', Securities: '#8b5cf6', 'Credit Card': '#ef4444', Loan: '#b91c1c',
@@ -102,25 +107,24 @@ const normalizeBroker = (account) => {
 
 /* ─── styles ─────────────────────────────────────────────────────── */
 const S = {
-  card:    { background: '#fff', borderRadius: 16, padding: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: 12 },
-  input:   { border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '9px 12px', fontSize: 14, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%', boxSizing: 'border-box' },
-  inputSm: { border: '1.5px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%', boxSizing: 'border-box', textAlign: 'right' },
-  btnDark: { background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 12, fontFamily: MONO, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em', textTransform: 'uppercase' },
-  btnGhost:{ background: 'none', border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontFamily: MONO, fontWeight: 600, cursor: 'pointer', color: '#374151' },
-  btnRed:  { background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 12, fontFamily: MONO, fontWeight: 700, cursor: 'pointer' },
-  label:   { fontSize: 10, fontFamily: MONO, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b7280' },
+  card:    { background: CLAY.surface, borderRadius: UI.cardRadius, padding: 20, boxShadow: CLAY.shadow, marginBottom: UI.sectionGap },
+  input:   { border: 'none', borderRadius: UI.controlRadius, padding: '12px 14px', fontSize: FS.lg, fontFamily: MONO, outline: 'none', background: CLAY.surf2, color: CLAY.text, width: '100%', boxSizing: 'border-box' },
+  inputSm: { border: 'none', borderRadius: UI.controlRadius, padding: '8px 10px', fontSize: FS.lg, fontFamily: MONO, outline: 'none', background: CLAY.surf2, color: CLAY.text, width: '100%', boxSizing: 'border-box', textAlign: 'right' },
+  btnDark: { background: CLAY.text, color: CLAY.surface, border: 'none', borderRadius: UI.controlRadius, padding: '10px 14px', fontSize: FS.lg, fontFamily: MONO, fontWeight: FW.semibold, cursor: 'pointer', letterSpacing: '0.04em', boxShadow: '4px 4px 12px rgba(44,36,32,0.28)' },
+  btnGhost:{ background: CLAY.surf2, border: 'none', boxShadow: CLAY.btn, borderRadius: UI.controlRadius, padding: '8px 14px', fontSize: FS.lg, fontFamily: MONO, fontWeight: FW.semibold, cursor: 'pointer', color: CLAY.textMid },
+  btnRed:  { background: `${CLAY.red}15`, color: CLAY.red, border: 'none', borderRadius: UI.controlRadius, padding: '9px 16px', fontSize: FS.lg, fontFamily: MONO, fontWeight: FW.semibold, cursor: 'pointer' },
+  label:   { fontSize: FS.lg, fontFamily: MONO, fontWeight: FW.semibold, letterSpacing: '0.08em', color: CLAY.textMid },
   pill: (active) => ({
-    display: 'inline-block', padding: '5px 12px', borderRadius: 20, fontSize: 12,
-    fontFamily: MONO, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
-    background: active ? '#1a1a1a' : '#f3f4f6', color: active ? '#fff' : '#374151',
-    border: 'none', letterSpacing: '0.04em',
+    display: 'inline-block', padding: '5px 12px', borderRadius: 9999, fontSize: FS.lg,
+    fontFamily: MONO, fontWeight: FW.semibold, cursor: 'pointer', whiteSpace: 'nowrap',
+    background: active ? CLAY.text : CLAY.surf2, color: active ? CLAY.surface : CLAY.textMid,
+    border: 'none', letterSpacing: '0.04em', boxShadow: active ? UI.activeShadow : 'none',
   }),
   catBadge: (cat) => ({
-    display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 10,
-    fontFamily: MONO, fontWeight: 700, textTransform: 'uppercase',
-    background: (CAT_COLOR[cat] || '#6b7280') + '20', color: CAT_COLOR[cat] || '#6b7280',
+    display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: FS.lg,
+    fontFamily: MONO, fontWeight: FW.semibold, background: (CAT_COLOR[cat] || '#6b7280') + '20', color: CAT_COLOR[cat] || '#6b7280',
   }),
-  select: { border: '1.5px solid #e5e7eb', borderRadius: 10, padding: '9px 12px', fontSize: 14, fontFamily: MONO, outline: 'none', background: '#fafafa', width: '100%' },
+  select: { border: 'none', borderRadius: UI.controlRadius, padding: '12px 14px', fontSize: FS.lg, fontFamily: MONO, outline: 'none', background: CLAY.surf2, color: CLAY.text, width: '100%' },
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -130,6 +134,7 @@ export default function FinancesTab({
   user,
   sb,
   showToast,
+  sendNotification,
   rates,
   balanceTxns,
   balanceCurrency,
@@ -138,9 +143,12 @@ export default function FinancesTab({
   expenseListCurrency = 'AUD',
   forcedView = null,
   showViewToggle = true,
+  viewOptions = null,
+  initialView = 'table',
   embedded = false,
   title = 'Finances',
 }) {
+  const isWide = useIsWide();
 
   /* ── state ── */
   const [accounts,  setAccounts]  = useState([]);
@@ -152,7 +160,7 @@ export default function FinancesTab({
   const [selDate,          setSelDate]         = useState('');
   const [summaryMonths,    setSummaryMonths]   = useState([]);
   const [selSummaryMonth,  setSelSummaryMonth] = useState('');
-  const [view,             setView]            = useState('table');
+  const [view,             setView]            = useState(initialView);
   const [displayCurrency, setDisplayCurrency] = useState('HKD');
 
   // account management
@@ -221,7 +229,19 @@ export default function FinancesTab({
 
   // inline balance editing
   const [editingBalance, setEditingBalance] = useState(null); // { accId, value }
+  const [showTableSettings, setShowTableSettings] = useState(false);
+  const [showStatSettings,  setShowStatSettings]  = useState(false);
+  const [analysisSort, setAnalysisSort] = useState({ key: 'month', direction: 'desc' });
   const activeView = forcedView ?? view;
+  const resolvedViewOptions = viewOptions || [
+    { id: 'table', icon: Table2, label: 'Table' },
+    { id: 'summary', icon: TrendingUp, label: 'Summary' },
+    { id: 'statistics', icon: ClipboardList, label: 'Statistics' },
+    { id: 'chat', icon: MessageSquare, label: 'Chat' },
+    { id: 'settings', icon: Settings2, label: 'Settings' },
+  ];
+  const isMonthBasedView = activeView === 'summary' || activeView === 'statistics' || activeView === 'summary_analytics';
+  const showPortfolioControls = activeView === 'table' || isMonthBasedView;
 
   /* ── derived dates ── */
   useEffect(() => {
@@ -398,13 +418,18 @@ export default function FinancesTab({
     return snap?.balance ?? null;
   }, [snapshots]);
 
-  // Latest rates record within a given month
+  const latestSnapshotDateForMonth = useCallback((month) => {
+    const snap = snapshots
+      .filter(s => s.snapshot_date.startsWith(month))
+      .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))[0];
+    return snap?.snapshot_date || null;
+  }, [snapshots]);
+
+  // Month views use the exchange rates saved with that month's latest snapshot.
   const getRatesForMonth = useCallback((month) => {
-    const entry = Object.entries(dateRates)
-      .filter(([d]) => d.startsWith(month))
-      .sort((a, b) => b[0].localeCompare(a[0]))[0];
-    return entry ? entry[1] : appToHKD();
-  }, [dateRates, appToHKD]);
+    const snapshotDate = latestSnapshotDateForMonth(month);
+    return (snapshotDate && dateRates[snapshotDate]) ? dateRates[snapshotDate] : appToHKD();
+  }, [dateRates, latestSnapshotDateForMonth, appToHKD]);
 
   const toDisplayForMonth = useCallback((amount, fromCur, month) =>
     cvtHKD(amount, fromCur, displayCurrency, getRatesForMonth(month)),
@@ -848,11 +873,11 @@ export default function FinancesTab({
 
   // Auto-load home stats when summary month changes
   useEffect(() => {
-    if (activeView === 'summary' && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
+    if ((activeView === 'summary' || activeView === 'summary_analytics') && selSummaryMonth) loadHomeStatsForMonth(selSummaryMonth);
   }, [activeView, selSummaryMonth, loadHomeStatsForMonth]);
 
   useEffect(() => {
-    if (activeView !== 'summary') return;
+    if (activeView !== 'summary' && activeView !== 'summary_analytics') return;
     summaryMonths.forEach((month) => {
       loadHomeStatsForMonth(month);
     });
@@ -1099,6 +1124,7 @@ export default function FinancesTab({
         json.error?.message ||
         'No response';
       setChatMessages(m => [...m, { role: 'assistant', content: text }]);
+      sendNotification?.('AI response ready', text.slice(0, 140), 'ai', user.id);
     } catch (err) {
       setChatMessages(m => [...m, { role: 'assistant', content: 'Error: ' + err.message }]);
     }
@@ -1203,52 +1229,29 @@ export default function FinancesTab({
   ══════════════════════════════════════════════════════════════ */
 
   const TopBar = (
-    <div style={{ padding: `${embedded ? 8 : 16}px 16px 0` }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showViewToggle ? 10 : 12 }}>
-        {!embedded ? <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>{title}</div> : <div />}
-        {activeView !== 'chat' ? (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
-              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '5px 8px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
-              {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <button onClick={() => fileRef.current?.click()} disabled={extracting}
-              style={{ ...S.btnGhost, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
-              {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
-              <span style={{ fontSize: 12 }}>Scan</span>
-            </button>
-          </div>
-        ) : <div />}
-        <input ref={fileRef} type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleExtractFile} />
-        <input ref={importCsvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImportCsvFile} />
-        <input ref={importJsonRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJsonFile} />
-      </div>
-      {showViewToggle && (
-        <div style={{ display: 'flex', gap: 0, background: '#f3f4f6', borderRadius: 12, padding: 3, marginBottom: 10 }}>
-          {[
-            { id: 'table',    icon: Table2,        label: 'Table'    },
-            { id: 'summary',  icon: TrendingUp,    label: 'Summary'  },
-            { id: 'statistics', icon: ClipboardList, label: 'Statistics' },
-            { id: 'chat',     icon: MessageSquare, label: 'Chat'     },
-            { id: 'settings', icon: Settings2,     label: 'Settings' },
-          ].map(v => (
-            <button key={v.id} onClick={() => setView(v.id)} style={{
-              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
-              padding: '7px 4px', borderRadius: 9, border: 'none', cursor: 'pointer', fontFamily: MONO,
-              fontSize: 10, fontWeight: 600, transition: 'all 0.15s',
-              background: activeView === v.id ? '#fff' : 'transparent',
-              color: activeView === v.id ? '#1a1a1a' : '#9ca3af',
-              boxShadow: activeView === v.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-            }}>
-              <v.icon size={13} /><span>{v.label}</span>
-            </button>
-          ))}
+    <div style={{ padding: embedded ? '0 16px 0' : '16px 16px 0' }}>
+      <input ref={fileRef} type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={handleExtractFile} />
+      <input ref={importCsvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImportCsvFile} />
+      <input ref={importJsonRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJsonFile} />
+      {!embedded && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showViewToggle ? 10 : 12 }}>
+          <div style={{ fontFamily: MONO, fontSize: FS.heading, fontWeight: FW.black, color: CLAY.text, lineHeight: 1, marginBottom: 24 }}>{title}</div>
+          <div />
         </div>
+      )}
+      {showViewToggle && (
+        <SegmentedTabs
+          tabs={resolvedViewOptions}
+          value={activeView}
+          onChange={setView}
+          compact={!embedded}
+          style={{ padding: 0 }}
+        />
       )}
     </div>
   );
 
-  const DatePills = (activeView === 'summary' || activeView === 'statistics') ? (
+  const DatePills = isMonthBasedView ? (
     <div className="se-noscroll" style={{ display: 'flex', gap: 6, padding: '0 16px 8px', overflowX: 'auto' }}>
       {summaryMonths.map(m => (
         <button key={m} style={S.pill(m === selSummaryMonth)} onClick={() => setSelSummaryMonth(m)}>
@@ -1262,9 +1265,7 @@ export default function FinancesTab({
         <button
           style={{ ...S.pill(false), background: '#f0fdf4', color: '#16a34a', border: '1.5px dashed #86efac', flexShrink: 0 }}
           onClick={() => {
-            const now = new Date();
-            const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
-            setNewSnapDate(endOfLastMonth);
+            setNewSnapDate(TODAY);
             setShowNewSnapModal(true);
           }}>
           + New
@@ -1278,28 +1279,29 @@ export default function FinancesTab({
   );
 
   // Collapsible rates bar
-  const ratesForBar = (activeView === 'summary' || activeView === 'statistics') ? getRatesForMonth(selSummaryMonth) : (selDate ? dateRates[selDate] : null);
+  const ratesMonthSnapshotDate = isMonthBasedView ? latestSnapshotDateForMonth(selSummaryMonth) : null;
+  const ratesForBar = isMonthBasedView ? getRatesForMonth(selSummaryMonth) : (selDate ? dateRates[selDate] : null);
   const ratesBarEntries = ratesForBar
     ? Object.entries(ratesForBar).filter(([cur]) => (
-        (activeView === 'summary' || activeView === 'statistics')
+        isMonthBasedView
           ? cur !== 'HKD'
           : tableRateCurrencies.includes(cur)
       ))
     : [];
-  const ratesBarLabel = (activeView === 'summary' || activeView === 'statistics')
-    ? `Rates for ${selSummaryMonth ? new Date(selSummaryMonth + '-02').toLocaleDateString('en', { month: 'short', year: 'numeric' }) : ''}`
+  const ratesBarLabel = isMonthBasedView
+    ? `Rates for ${ratesMonthSnapshotDate ? fmtDate(ratesMonthSnapshotDate) : (selSummaryMonth ? fmtDate(selSummaryMonth + '-01') : '')}`
     : `Rates for ${fmtDate(selDate)}`;
   const RatesBar = ratesForBar && ratesBarEntries.length > 0 ? (
     <div style={{ padding: '0 16px 8px' }}>
       <button onClick={() => setShowRatesFor(v => !v)}
-        style={{ ...S.btnGhost, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+        style={{ ...S.btnGhost, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: FS.lg }}>
         <ChevronDown size={11} style={{ transform: showRatesFor ? 'none' : 'rotate(-90deg)', transition: '0.15s' }} />
         {ratesBarLabel}
       </button>
       {showRatesFor && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 2px 4px' }}>
           {ratesBarEntries.map(([cur, rate]) => (
-            <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: 6 }}>
+            <span key={cur} style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: 6 }}>
               1 {cur} = {rate.toFixed(2)} HKD
             </span>
           ))}
@@ -1323,54 +1325,42 @@ export default function FinancesTab({
 
     return (
     <div style={{ padding: '0 16px' }}>
-      {/* Edit mode toggle */}
-      <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+      {/* Edit mode toggle + settings gear */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         <button onClick={() => setShowEdits(v => !v)} style={{
-          ...S.btnGhost, padding: '5px 12px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4,
+          ...S.btnGhost, padding: '5px 12px', fontSize: FS.lg, display: 'flex', alignItems: 'center', gap: 4,
           background: showEdits ? '#eff6ff' : undefined, borderColor: showEdits ? '#93c5fd' : undefined, color: showEdits ? '#1d4ed8' : undefined,
         }}>
           <Pencil size={11} /> {showEdits ? 'Hide edits' : 'Edit accounts'}
         </button>
+        <button onClick={() => setShowTableSettings(v => !v)} style={{
+          ...S.btnGhost, padding: '5px 10px', fontSize: FS.lg, display: 'flex', alignItems: 'center', gap: 4,
+          background: showTableSettings ? '#f0fdf4' : undefined, borderColor: showTableSettings ? '#86efac' : undefined, color: showTableSettings ? '#16a34a' : undefined,
+        }}>
+          <Settings2 size={13} />
+        </button>
       </div>
-
-      {/* Live rates — shown when in new/today mode */}
-      {(isToday || isNew) && (() => {
-        const liveRates = appToHKD();
-        const entryCurrencies = tableRateCurrencies;
-        if (!entryCurrencies.length) return null;
-        return (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, alignItems: 'center', padding: '0 2px' }}>
-            <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Live rates</span>
-            {entryCurrencies.map(cur => (
-              <span key={cur} style={{ fontFamily: MONO, fontSize: 10, color: '#374151', background: '#f3f4f6', padding: '2px 7px', borderRadius: 6 }}>
-                1 {cur} = HKD {cvtHKD(1, cur, 'HKD', liveRates).toFixed(2)}
-              </span>
-            ))}
+      {showTableSettings && (
+        <div style={{ ...S.card, marginBottom: 10 }}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Load Expenses Settings</div>
+          <div style={{ ...S.label, fontSize: FS.lg, marginBottom: 4 }}>List Name</div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input value={homeListName} onChange={e => setHomeListName(e.target.value)}
+              placeholder="Home" style={{ ...S.input, flex: 1 }} />
+            <button onClick={() => saveUserSetting('home_list_name', homeListName).then(() => showToast?.('Saved'))}
+              style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
           </div>
-        );
-      })()}
-
-      {/* Exchange rates for selected snapshot */}
-      {usedCurrencies.length > 0 && selDate && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, alignItems: 'center' }}>
-          <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>
-            Rates
-          </span>
-          {usedCurrencies.map(cur => {
-            const rate = cvtHKD(1, cur, displayCurrency, activeRates);
-            return (
-              <span key={cur} style={{
-                fontFamily: MONO, fontSize: 10, color: '#374151',
-                background: isHistorical ? '#eff6ff' : '#f3f4f6',
-                border: isHistorical ? '1px solid #bfdbfe' : 'none',
-                padding: '2px 8px', borderRadius: 6,
-              }}>
-                1 {cur} = {displayCurrency} {rate.toFixed(2)}
-              </span>
-            );
-          })}
+          <div style={{ ...S.label, fontSize: FS.lg, marginBottom: 4 }}>Person (display name in expense list)</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={expensePerson} onChange={e => setExpensePerson(e.target.value)}
+              placeholder="e.g. Renee" style={{ ...S.input, flex: 1 }} />
+            <button onClick={() => saveUserSetting('expense_person', expensePerson).then(() => showToast?.('Saved'))}
+              style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
+          </div>
+          <div style={{ ...S.label, fontSize: FS.lg, opacity: 0.6, marginTop: 6 }}>Leave blank to use your own membership display name in that list.</div>
         </div>
       )}
+
 
       {/* Account rows grouped by bank */}
       {[...new Set(accounts.map(a => a.bank))].sort().map(bank => {
@@ -1390,7 +1380,7 @@ export default function FinancesTab({
                     else next.add(bank);
                     return next;
                   })}
-                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: MONO, fontSize: FS.lg, color: '#9ca3af' }}
                 >
                   {showDormantForBank ? `hide ${hiddenCount}` : `${hiddenCount} hidden`}
                 </button>
@@ -1409,7 +1399,7 @@ export default function FinancesTab({
                   <div key={acc.id} style={{ borderBottom: i < visibleBankAccs.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
                     {/* Normal row */}
                     <div style={{
-                      display: 'grid', gridTemplateColumns: showEdits ? '44px 1fr auto auto 110px' : '1fr auto auto 110px',
+                      display: 'grid', gridTemplateColumns: showEdits ? '44px 1fr auto 110px' : '1fr auto 110px',
                       padding: '10px 14px', gap: 8, alignItems: 'center',
                     }}>
                       {/* Edit + reorder column (left-aligned, only when showEdits) */}
@@ -1421,44 +1411,35 @@ export default function FinancesTab({
                           </button>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                             <button onClick={() => reorderAcc(bank, acc.id, -1)} disabled={i === 0}
-                              style={{ background: 'none', border: 'none', cursor: i === 0 ? 'default' : 'pointer', padding: '1px 2px', color: i === 0 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
+                              style={{ background: 'none', border: 'none', cursor: i === 0 ? 'default' : 'pointer', padding: '1px 2px', color: i === 0 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: FS.lg }}>
                               ▲
                             </button>
                             <button onClick={() => reorderAcc(bank, acc.id, 1)} disabled={i === visibleBankAccs.length - 1}
-                              style={{ background: 'none', border: 'none', cursor: i === visibleBankAccs.length - 1 ? 'default' : 'pointer', padding: '1px 2px', color: i === visibleBankAccs.length - 1 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: 10 }}>
+                              style={{ background: 'none', border: 'none', cursor: i === visibleBankAccs.length - 1 ? 'default' : 'pointer', padding: '1px 2px', color: i === visibleBankAccs.length - 1 ? '#d1d5db' : '#9ca3af', lineHeight: 1, fontSize: FS.lg }}>
                               ▼
                             </button>
                           </div>
                         </div>
                       )}
                       <div>
-                        <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: '#111' }}>
+                        <div style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 600, color: '#111', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                           {acc.account_name}{acc.account_number ? ` ···${acc.account_number}` : ''}
-                        </div>
-                        <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={S.catBadge(acc.category)}>{acc.category}</span>
-                          {miles != null && <span style={{ color: '#06b6d4' }}>≈ {miles.toLocaleString()} mi</span>}
                         </div>
+                        {miles != null && <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#06b6d4', marginTop: 2 }}>≈ {miles.toLocaleString()} mi</div>}
                       </div>
-                      {/* Date + save indicator */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 36 }}>
-                        {displayDate && (
-                          <span style={{ fontFamily: MONO, fontSize: 9, color: autoSaveStatus[acc.id] === 'saved' ? '#16a34a' : '#9ca3af', whiteSpace: 'nowrap' }}>
-                            {fmtDate(displayDate)}
-                          </span>
+                      {/* Save indicator */}
+                      <AnimatePresence>
+                        {autoSaveStatus[acc.id] && (
+                          <motion.div key={autoSaveStatus[acc.id]} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            style={{ color: autoSaveStatus[acc.id] === 'saving' ? '#9ca3af' : '#16a34a', display: 'flex', alignItems: 'center' }}>
+                            {autoSaveStatus[acc.id] === 'saving'
+                              ? <RefreshCw size={9} style={{ animation: 'spin 1s linear infinite' }} />
+                              : <Check size={9} />}
+                          </motion.div>
                         )}
-                        <AnimatePresence>
-                          {autoSaveStatus[acc.id] && (
-                            <motion.div key={autoSaveStatus[acc.id]} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                              style={{ color: autoSaveStatus[acc.id] === 'saving' ? '#9ca3af' : '#16a34a', display: 'flex', alignItems: 'center' }}>
-                              {autoSaveStatus[acc.id] === 'saving'
-                                ? <RefreshCw size={9} style={{ animation: 'spin 1s linear infinite' }} />
-                                : <Check size={9} />}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                      <span style={{ ...S.label, color: '#9ca3af', fontSize: 10 }}>{acc.currency === 'PTS' ? 'PTS' : acc.currency}</span>
+                      </AnimatePresence>
+                      <span style={{ ...S.label, color: '#9ca3af', fontSize: FS.lg }}>{acc.currency === 'PTS' ? 'PTS' : acc.currency}</span>
                       <input
                         type="number"
                         defaultValue={savedBal != null ? String(savedBal) : ''}
@@ -1535,7 +1516,7 @@ export default function FinancesTab({
       {selDate && selDate !== 'current' && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: -60, marginBottom: 90 }}>
           <button onClick={() => setConfirmDeleteSnap(true)}
-            style={{ ...S.btnGhost, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#9ca3af' }}>
+            style={{ ...S.btnGhost, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, fontSize: FS.lg, color: '#9ca3af' }}>
             <Trash2 size={12} /> Delete snapshot ({fmtDate(selDate)})
           </button>
         </div>
@@ -1630,6 +1611,32 @@ export default function FinancesTab({
     usInflationRates,
   ]);
 
+  const toggleAnalysisSort = (key) => {
+    setAnalysisSort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === 'desc' ? 'asc' : 'desc' }
+        : { key, direction: key === 'month' ? 'desc' : 'desc' }
+    );
+  };
+
+  const sortedAnalysisRows = useMemo(() => {
+    const direction = analysisSort.direction === 'asc' ? 1 : -1;
+    return [...analysisRows].sort((a, b) => {
+      if (analysisSort.key === 'month') {
+        return direction * String(a.month || '').localeCompare(String(b.month || ''));
+      }
+      const aValue = a[analysisSort.key];
+      const bValue = b[analysisSort.key];
+      const aMissing = aValue == null || Number.isNaN(Number(aValue));
+      const bMissing = bValue == null || Number.isNaN(Number(bValue));
+      if (aMissing && bMissing) return String(b.month || '').localeCompare(String(a.month || ''));
+      if (aMissing) return 1;
+      if (bMissing) return -1;
+      if (Number(aValue) === Number(bValue)) return String(b.month || '').localeCompare(String(a.month || ''));
+      return direction * (Number(aValue) - Number(bValue));
+    });
+  }, [analysisRows, analysisSort]);
+
   const SummaryView = (() => {
     const Delta = ({ cur, prev }) => {
       if (prev == null || prev === 0) return null;
@@ -1637,7 +1644,7 @@ export default function FinancesTab({
       const pct = (diff / Math.abs(prev)) * 100;
       const up = diff >= 0;
       return (
-        <span style={{ fontFamily: MONO, fontSize: 10, color: up ? '#16a34a' : '#dc2626', display: 'flex', alignItems: 'center', gap: 2 }}>
+        <span style={{ fontFamily: MONO, fontSize: FS.lg, color: up ? '#16a34a' : '#dc2626', display: 'flex', alignItems: 'center', gap: 2 }}>
           {up ? <TrendingUp size={10} /> : <TrendingDown size={10} />}{fmtPct(pct)}
         </span>
       );
@@ -1671,38 +1678,44 @@ export default function FinancesTab({
     return (
       <div style={{ padding: '0 16px 80px' }}>
         {/* Summary card */}
-        <div style={{ ...S.card, background: '#fff', padding: '16px 18px', border: '1.5px solid #f0f0f0' }}>
-          <div style={{ ...S.label, color: '#9ca3af', marginBottom: 12 }}>Summary ({displayCurrency})</div>
+        <div style={{ ...S.card, padding: '16px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ ...S.label, color: CLAY.textLt }}>Summary</div>
+            <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
+              style={{ ...S.select, width: 'auto', padding: '5px 8px', fontWeight: FW.semibold, cursor: 'pointer' }}>
+              {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
           {[
             { label: 'Cash',          value: cash,    prev: prevCash    },
             { label: 'Securities',    value: sec,     prev: prevSec     },
             { label: '− Credit Card', value: cc,      prev: prevCC,     negate: true },
           ].map((row) => {
             const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+            const pct = diff != null && row.prev !== 0 ? fmtPct(diff / Math.abs(row.prev) * 100) : null;
             return (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>{row.label}</span>
+                <span style={{ fontFamily: MONO, fontSize: FS.lg, color: CLAY.textMid }}>{row.label}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {diff != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
-                      {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
+                  {pct && (
+                    <span style={{ fontFamily: MONO, fontSize: FS.lg, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {pct}
                     </span>
                   )}
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#1a1a1a' }}>
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: '#1a1a1a' }}>
                     {fmtNum(row.value, displayCurrency)}
                   </span>
                 </div>
               </div>
             );
           })}
-          {/* Net Worth = Cash + Securities - CC */}
+          {/* Portfolio Value = Cash + Securities - CC */}
           <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>Net Worth</span>
+            <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: '#1a1a1a' }}>Portfolio Value</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {prevNetWorth != null && (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: (netWorth - prevNetWorth) >= 0 ? '#16a34a' : '#dc2626' }}>
-                  {(netWorth - prevNetWorth) >= 0 ? '+' : ''}{fmtNum(netWorth - prevNetWorth, displayCurrency)}
-                  {' '}({fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)})
+              {prevNetWorth != null && prevNetWorth !== 0 && (
+                <span style={{ fontFamily: MONO, fontSize: FS.lg, color: (netWorth - prevNetWorth) >= 0 ? '#16a34a' : '#dc2626' }}>
+                  {fmtPct(((netWorth - prevNetWorth) / Math.abs(prevNetWorth)) * 100)}
                 </span>
               )}
               <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netWorth >= 0 ? '#16a34a' : '#dc2626' }}>
@@ -1710,20 +1723,7 @@ export default function FinancesTab({
               </span>
             </div>
           </div>
-          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>Net Asset</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {prevNetAsset != null && (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: (netAsset - prevNetAsset) >= 0 ? '#16a34a' : '#dc2626' }}>
-                  {(netAsset - prevNetAsset) >= 0 ? '+' : ''}{fmtNum(netAsset - prevNetAsset, displayCurrency)}
-                </span>
-              )}
-              <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netAsset >= 0 ? '#16a34a' : '#dc2626' }}>
-                {fmtNum(netAsset, displayCurrency)}
-              </span>
-            </div>
-          </div>
-          {/* Property / Loan / Net Property */}
+          {/* Property / Loan / Property Value / Total Wealth */}
           {(prop > 0 || loan > 0) && (
             <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginBottom: 10 }}>
               {[
@@ -1731,32 +1731,46 @@ export default function FinancesTab({
                 { label: '− Loan',   value: loan, prev: prevLoan, negate: true },
               ].map((row) => {
                 const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+                const pct = diff != null && row.prev !== 0 ? fmtPct(diff / Math.abs(row.prev) * 100) : null;
                 return (
                   <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>{row.label}</span>
+                    <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280' }}>{row.label}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {diff != null && (
-                        <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
-                          {diff >= 0 ? '+' : ''}{fmtNum(diff, displayCurrency)}
+                      {pct && (
+                        <span style={{ fontFamily: MONO, fontSize: FS.lg, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                          {pct}
                         </span>
                       )}
-                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#1a1a1a' }}>
+                      <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: '#1a1a1a' }}>
                         {fmtNum(row.value, displayCurrency)}
                       </span>
                     </div>
                   </div>
                 );
               })}
-              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Property</span>
+              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: '#374151' }}>Property Value</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {prevNetProperty != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: (netProperty - prevNetProperty) >= 0 ? '#16a34a' : '#dc2626' }}>
-                      {(netProperty - prevNetProperty) >= 0 ? '+' : ''}{fmtNum(netProperty - prevNetProperty, displayCurrency)}
+                  {prevNetProperty != null && prevNetProperty !== 0 && (
+                    <span style={{ fontFamily: MONO, fontSize: FS.lg, color: (netProperty - prevNetProperty) >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {fmtPct(((netProperty - prevNetProperty) / Math.abs(prevNetProperty)) * 100)}
                     </span>
                   )}
-                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: netProperty >= 0 ? '#16a34a' : '#dc2626' }}>
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: netProperty >= 0 ? '#16a34a' : '#dc2626' }}>
                     {fmtNum(netProperty, displayCurrency)}
+                  </span>
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: '#1a1a1a' }}>Total Wealth</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {prevNetAsset != null && prevNetAsset !== 0 && (
+                    <span style={{ fontFamily: MONO, fontSize: FS.lg, color: (netAsset - prevNetAsset) >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {fmtPct(((netAsset - prevNetAsset) / Math.abs(prevNetAsset)) * 100)}
+                    </span>
+                  )}
+                  <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: netAsset >= 0 ? '#16a34a' : '#dc2626' }}>
+                    {fmtNum(netAsset, displayCurrency)}
                   </span>
                 </div>
               </div>
@@ -1766,31 +1780,31 @@ export default function FinancesTab({
           {(() => {
             const hs = homeMonthlyStats[sm];
             const hsCur = hs?.currency || displayCurrency;
-            // Convert old income/expense to home list currency for combined total
-            // (they may differ if displayCurrency != hsCur, but best effort: show in displayCurrency)
             const combinedIncome  = income  + (hs ? cvtHKD(hs.income,  hsCur, displayCurrency, getRatesForMonth(sm)) : 0);
             const combinedExpense = expense + (hs ? cvtHKD(hs.expense, hsCur, displayCurrency, getRatesForMonth(sm)) : 0);
             const combinedNet = combinedIncome - combinedExpense;
             const rows = [
-              { label: 'Income (Old)',          value: income,       prev: prevIncome,   color: '#16a34a', cur: displayCurrency },
+              income > 0 ? { label: 'Income (Old)', value: income, prev: prevIncome, color: '#16a34a', cur: displayCurrency } : null,
               hs && hs.income  > 0 ? { label: `Income (${homeListName})`,   value: cvtHKD(hs.income, hsCur, displayCurrency, getRatesForMonth(sm)), color: '#16a34a', cur: displayCurrency } : null,
-              { label: '− Expense (Old)',        value: expense,      prev: prevExpense,  color: '#dc2626', cur: displayCurrency, negate: true },
+              expense > 0 ? { label: '− Expense (Old)', value: expense, prev: prevExpense, color: '#dc2626', cur: displayCurrency, negate: true } : null,
               hs && hs.expense > 0 ? { label: `− Expense (${homeListName})`, value: cvtHKD(hs.expense, hsCur, displayCurrency, getRatesForMonth(sm)), color: '#dc2626', cur: displayCurrency } : null,
             ].filter(Boolean);
+            if (rows.length === 0) return null;
             return (
               <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>
                 {rows.map(row => {
                   const diff = row.prev != null ? (row.negate ? row.prev - row.value : row.value - row.prev) : null;
+                  const pct = diff != null && row.prev !== 0 ? fmtPct(diff / Math.abs(row.prev) * 100) : null;
                   return (
                     <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>{row.label}</span>
+                      <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280' }}>{row.label}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {diff != null && (
-                          <span style={{ fontFamily: MONO, fontSize: 10, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
-                            {diff >= 0 ? '+' : ''}{fmtNum(diff, row.cur)}
+                        {pct && (
+                          <span style={{ fontFamily: MONO, fontSize: FS.lg, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                            {pct}
                           </span>
                         )}
-                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: row.color }}>
+                        <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: row.color }}>
                           {fmtNum(row.value, row.cur)}
                         </span>
                       </div>
@@ -1798,8 +1812,8 @@ export default function FinancesTab({
                   );
                 })}
                 <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 8, marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#374151' }}>Net Income</span>
-                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: combinedNet >= 0 ? '#16a34a' : '#dc2626' }}>
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: '#374151' }}>Net Income</span>
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, color: combinedNet >= 0 ? '#16a34a' : '#dc2626' }}>
                     {fmtNum(combinedNet, displayCurrency)}
                   </span>
                 </div>
@@ -1833,19 +1847,19 @@ export default function FinancesTab({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <ChevronDown size={13} style={{ color: '#9ca3af', transform: isExpanded ? 'none' : 'rotate(-90deg)', transition: 'transform 0.15s', flexShrink: 0 }} />
                   <span style={S.catBadge(cat)}>{cat}</span>
-                  {isInfoOnly && <span style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af', letterSpacing: '0.05em' }}>info only</span>}
+                  {isInfoOnly && <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#9ca3af', letterSpacing: '0.05em' }}>info only</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {prevTotalDisp != null && (
-                    <span style={{ fontFamily: MONO, fontSize: 9, color: (totalDisp - prevTotalDisp) >= 0 ? '#16a34a' : '#dc2626' }}>
+                    <span style={{ fontFamily: MONO, fontSize: FS.lg, color: (totalDisp - prevTotalDisp) >= 0 ? '#16a34a' : '#dc2626' }}>
                       {(totalDisp - prevTotalDisp) >= 0 ? '+' : ''}{fmtNum(totalDisp - prevTotalDisp, displayCurrency)}
                     </span>
                   )}
-                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700,
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700,
                     color: (cat === 'Credit Card' || cat === 'Expense' || cat === 'Loan') ? '#ef4444' : cat === 'Income' ? '#22c55e' : '#1a1a1a' }}>
                     {fmtNum(totalDisp, displayCurrency)}
                   </span>
-                  {!['Cash', 'Securities', 'Credit Card'].includes(cat) && <Delta cur={totalDisp} prev={prevTotalDisp} />}
+                  {!['Cash', 'Securities', 'Credit Card', 'Loan', 'Property', 'Others'].includes(cat) && <Delta cur={totalDisp} prev={prevTotalDisp} />}
                 </div>
               </button>
 
@@ -1870,20 +1884,20 @@ export default function FinancesTab({
                         {/* Currency subtotal */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ ...S.label, fontSize: 9, color: '#9ca3af', minWidth: 32 }}>{cur}</span>
+                            <span style={{ ...S.label, fontSize: FS.lg, color: '#9ca3af', minWidth: 32 }}>{cur}</span>
                             {diff != null && (
-                              <span style={{ fontFamily: MONO, fontSize: 9, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
+                              <span style={{ fontFamily: MONO, fontSize: FS.lg, color: diff >= 0 ? '#16a34a' : '#dc2626' }}>
                                 {diff >= 0 ? '+' : ''}{fmtNum(diff, cur)}
                               </span>
                             )}
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>{fmtNum(native, cur)}</div>
+                            <div style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 600 }}>{fmtNum(native, cur)}</div>
                             {cur !== displayCurrency && (
-                              <div style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>= {fmtNum(toDisplayForMonth(native, cur, sm), displayCurrency)}</div>
+                              <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280' }}>= {fmtNum(toDisplayForMonth(native, cur, sm), displayCurrency)}</div>
                             )}
                             {prevNative != null && (
-                              <div style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevNative, cur)}</div>
+                              <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#9ca3af' }}>prev: {fmtNum(prevNative, cur)}</div>
                             )}
                           </div>
                         </div>
@@ -1894,15 +1908,15 @@ export default function FinancesTab({
                           const miles = acc.metadata?.miles_ratio ? Math.round(b / acc.metadata.miles_ratio * 1000) : null;
                           return (
                             <div key={acc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '2px 0 2px 8px', borderLeft: `2px solid ${(CAT_COLOR[cat] || '#9ca3af')}30` }}>
-                              <span style={{ fontFamily: MONO, fontSize: 10, color: '#6b7280' }}>{acc.bank} · {acc.account_name}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                              <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280' }}>{acc.bank} · {acc.account_name}</span>
+                              <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 600, color: '#374151' }}>
                                 {fmtNum(b, cur)}{miles ? ` · ${miles.toLocaleString()}mi` : ''}
                               </span>
                             </div>
                           );
                         })}
                         {totalMiles > 0 && (
-                          <div style={{ fontFamily: MONO, fontSize: 10, color: '#06b6d4', marginTop: 2, paddingLeft: 8 }}>
+                          <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#06b6d4', marginTop: 2, paddingLeft: 8 }}>
                             ≈ {Math.round(totalMiles).toLocaleString()} miles total
                           </div>
                         )}
@@ -1912,12 +1926,12 @@ export default function FinancesTab({
 
                   {(curCurs.length > 1 || curCurs[0] !== displayCurrency) && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, marginTop: 4, borderTop: '1px dashed #e5e7eb' }}>
-                      <span style={{ ...S.label, fontSize: 9 }}>Total in {displayCurrency}</span>
+                      <span style={{ ...S.label, fontSize: FS.lg }}>Total in {displayCurrency}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         {prevTotalDisp != null && (
-                          <span style={{ fontFamily: MONO, fontSize: 9, color: '#9ca3af' }}>prev: {fmtNum(prevTotalDisp, displayCurrency)}</span>
+                          <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#9ca3af' }}>prev: {fmtNum(prevTotalDisp, displayCurrency)}</span>
                         )}
-                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{fmtNum(totalDisp, displayCurrency)}</span>
+                        <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700 }}>{fmtNum(totalDisp, displayCurrency)}</span>
                       </div>
                     </div>
                   )}
@@ -1933,32 +1947,54 @@ export default function FinancesTab({
 
   const StatisticsView = (
     <div style={{ padding: '0 16px 80px' }}>
+      {showStatSettings && (
+        <div style={S.card}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Expected Net Asset</div>
+          <div style={{ ...S.label, fontSize: FS.lg, marginBottom: 4 }}>Base Month</div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input type="month" value={expectedNetAssetBaseMonth}
+              onChange={e => setExpectedNetAssetBaseMonth(e.target.value)}
+              style={{ ...S.input, flex: 1 }} />
+            <button onClick={() => saveUserSetting('expected_net_asset_base_month', expectedNetAssetBaseMonth).then(() => showToast?.('Saved'))}
+              style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
+          </div>
+          <div style={{ ...S.label, fontSize: FS.lg, marginBottom: 4 }}>Base Value</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input type="number" value={expectedNetAssetBaseValue}
+              onChange={e => setExpectedNetAssetBaseValue(e.target.value)}
+              placeholder="19000000" style={{ ...S.input, flex: 1 }} />
+            <button onClick={() => saveUserSetting('expected_net_asset_base_value', String(expectedNetAssetBaseValue || DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE)).then(() => showToast?.('Saved'))}
+              style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
+          </div>
+          <div style={{ ...S.label, fontSize: FS.lg, opacity: 0.6, marginTop: 6 }}>
+            Future months calculate automatically from this starting month and add each month&apos;s Net Income after that.
+          </div>
+        </div>
+      )}
       <div style={{ ...S.card, padding: 0, overflow: 'hidden' }}>
-        <div style={{ ...S.label, color: '#9ca3af', padding: '14px 16px 0' }}>Analysis ({displayCurrency})</div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 12px 0' }}>
-          <button
-            onClick={() => {
-              const el = document.getElementById('portfolio-analysis-table');
-              el?.scrollBy({ left: -240, behavior: 'smooth' });
-            }}
-            style={{ ...S.btnGhost, padding: '5px 10px', minWidth: 0 }}
-          >
-            ←
-          </button>
-          <button
-            onClick={() => {
-              const el = document.getElementById('portfolio-analysis-table');
-              el?.scrollBy({ left: 240, behavior: 'smooth' });
-            }}
-            style={{ ...S.btnGhost, padding: '5px 10px', minWidth: 0 }}
-          >
-            →
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 0' }}>
+          <div style={{ ...S.label, color: '#9ca3af' }}>Analysis</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button onClick={() => setShowStatSettings(v => !v)} style={{
+              ...S.btnGhost, padding: '5px 8px', minWidth: 0, display: 'flex', alignItems: 'center',
+              background: showStatSettings ? '#f0fdf4' : undefined, borderColor: showStatSettings ? '#86efac' : undefined, color: showStatSettings ? '#16a34a' : undefined,
+            }}><Settings2 size={13} /></button>
+            <button
+              onClick={() => { const el = document.getElementById('portfolio-analysis-table'); el?.scrollBy({ left: -240, behavior: 'smooth' }); }}
+              style={{ ...S.btnGhost, padding: '5px 8px', minWidth: 0 }}>←</button>
+            <button
+              onClick={() => { const el = document.getElementById('portfolio-analysis-table'); el?.scrollBy({ left: 240, behavior: 'smooth' }); }}
+              style={{ ...S.btnGhost, padding: '5px 8px', minWidth: 0 }}>→</button>
+            <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
+              style={{ ...S.select, width: 'auto', padding: '5px 8px', fontWeight: FW.semibold, cursor: 'pointer' }}>
+              {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
         </div>
         <div id="portfolio-analysis-table" style={{ overflowX: 'auto', paddingTop: 8 }}>
-          <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: 'max-content', tableLayout: 'fixed' }}>
+          <table style={tableStyle}>
             <colgroup>
-              <col style={{ width: 68 }} />
+              <col style={{ width: 90 }} />
               <col style={{ width: 72 }} />
               <col style={{ width: 72 }} />
               <col style={{ width: 72 }} />
@@ -1972,76 +2008,67 @@ export default function FinancesTab({
               <col style={{ width: 80 }} />
             </colgroup>
             <thead>
-              <tr style={{ background: '#fafaf8' }}>
+              <tr style={tableHeaderRowStyle}>
                 {[
-                  { top: 'Month', bottom: '' },
-                  { top: 'Net', bottom: 'Asset' },
-                  { top: 'Net', bottom: 'Worth' },
-                  { top: 'Net', bottom: 'Property' },
-                  { top: 'Net', bottom: 'Income' },
-                  { top: 'Cash', bottom: '' },
-                  { top: 'Securities', bottom: '' },
-                  { top: 'Credit', bottom: 'Card' },
-                  { top: 'Income', bottom: '' },
-                  { top: 'Expense', bottom: '' },
-                  { top: 'Inflation', bottom: '' },
-                  { top: 'Expected', bottom: 'Net Asset' },
+                  { top: 'Month', bottom: '', sortKey: 'month' },
+                  { top: 'Total', bottom: 'Wealth', sortKey: 'netAsset' },
+                  { top: 'Portfolio', bottom: 'Value', sortKey: 'netWorth' },
+                  { top: 'Property', bottom: 'Value', sortKey: 'netProperty' },
+                  { top: 'Net', bottom: 'Income', sortKey: 'netIncome' },
+                  { top: 'Cash', bottom: '', sortKey: 'cash' },
+                  { top: 'Securities', bottom: '', sortKey: 'securities' },
+                  { top: 'Credit', bottom: 'Card', sortKey: 'creditCard' },
+                  { top: 'Income', bottom: '', sortKey: 'income' },
+                  { top: 'Expense', bottom: '', sortKey: 'expense' },
+                  { top: 'Inflation', bottom: '', sortKey: 'inflationRate' },
+                  { top: 'Expected', bottom: 'Net Asset', sortKey: 'expectedNetAsset' },
                 ].map((label, index) => (
                   <th
                     key={`${label.top}-${label.bottom}`}
                     style={{
-                      ...S.label,
-                      textAlign: 'left',
-                      padding: '5px 4px',
-                      borderBottom: '1px solid #ece7df',
-                      fontSize: 10,
+                      ...tableHeaderCellStyle({
+                        sticky: index === 0,
+                        align: 'left',
+                        padding: index === 0 ? '5px 4px 5px 12px' : '5px 4px',
+                      }),
                       lineHeight: 1.2,
-                      opacity: 1,
-                      color: '#111827',
-                      position: index === 0 ? 'sticky' : 'static',
-                      left: index === 0 ? 0 : 'auto',
-                      zIndex: index === 0 ? 3 : 1,
-                      background: '#fafaf8',
+                      whiteSpace: 'normal',
                     }}
                   >
-                    <div style={{ display: 'grid', gap: 2, width: '100%' }}>
-                      {label.bottom ? (
-                        <>
-                          <div>{label.top}</div>
-                          <div style={{ height: 1, background: '#d6d3d1', width: '100%' }} />
-                          <div>{label.bottom}</div>
-                        </>
-                      ) : (
-                        <div>{label.top}</div>
-                      )}
-                    </div>
+                    <DataTableHeaderLabel
+                      top={label.top}
+                      bottom={label.bottom}
+                      sortKey={label.sortKey}
+                      sort={analysisSort}
+                      onSort={toggleAnalysisSort}
+                    />
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {analysisRows.map((row) => (
-                <tr key={row.month} style={{ borderBottom: '1px solid #f1ede5' }}>
-                  <td style={{ padding: '5px 4px', verticalAlign: 'middle', position: 'sticky', left: 0, background: '#fff', zIndex: 2, boxShadow: '8px 0 14px -12px rgba(15,23,42,0.22)' }}>
-                    <div style={{ fontWeight: 700, fontSize: 10, lineHeight: 1.15 }}>
+              {sortedAnalysisRows.map((row) => (
+                <tr key={row.month} style={tableRowStyle}>
+                  <td style={tableCellStyle({ sticky: true, padding: '5px 4px 5px 12px', emphasis: true })}>
+                    <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.15 }}>
                       {new Date(`${row.month}-02`).toLocaleDateString('en', { month: 'short', year: 'numeric' })}
                     </div>
                   </td>
                   {[
-                    { value: row.netAsset, color: row.netAsset >= 0 ? '#16a34a' : '#dc2626' },
-                    { value: row.netWorth, color: row.netWorth >= 0 ? '#16a34a' : '#dc2626' },
-                    { value: row.netProperty, color: row.netProperty >= 0 ? '#16a34a' : '#dc2626' },
-                    { value: row.netIncome, color: row.netIncome >= 0 ? '#16a34a' : '#dc2626' },
-                    { value: row.cash, color: '#111827' },
-                    { value: row.securities, color: '#111827' },
-                    { value: row.creditCard, color: '#dc2626' },
-                    { value: row.income, color: '#16a34a' },
-                    { value: row.expense, color: '#dc2626' },
-                    { value: row.inflationRate, color: '#111827', format: 'pct' },
-                    { value: row.expectedNetAsset, color: '#111827' },
+                    { value: row.netAsset, color: row.netAsset >= 0 ? CLAY.green : CLAY.red },
+                    { value: row.netWorth, color: row.netWorth >= 0 ? CLAY.green : CLAY.red },
+                    { value: row.netProperty, color: row.netProperty >= 0 ? CLAY.green : CLAY.red },
+                    { value: row.netIncome, color: row.netIncome >= 0 ? CLAY.green : CLAY.red },
+                    { value: row.cash, color: CLAY.text },
+                    { value: row.securities, color: CLAY.text },
+                    { value: row.creditCard, color: CLAY.red },
+                    { value: row.income, color: CLAY.green },
+                    { value: row.expense, color: CLAY.red },
+                    { value: row.inflationRate, color: CLAY.text, format: 'pct' },
+                    { value: row.expectedNetAsset, color: CLAY.text },
                   ].map((cell, index) => (
-                    <td key={`${row.month}-${index}`} style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                      <div style={{ fontWeight: 700, color: cell.color, lineHeight: 1.1, fontSize: 10 }}>
+                    <td key={`${row.month}-${index}`} style={tableCellStyle({ padding: '5px 4px' })}>
+                      <div style={{ fontWeight: 700, color: cell.color, lineHeight: 1.1, fontSize: FS.lg }}>
                         {cell.value == null ? '—' : cell.format === 'pct' ? fmtPct(cell.value * 100) : fmtNum(cell.value, displayCurrency)}
                       </div>
                     </td>
@@ -2051,12 +2078,19 @@ export default function FinancesTab({
             </tbody>
           </table>
         </div>
-        <div style={{ padding: '10px 12px 12px', borderTop: '1px solid #f1ede5', fontSize: 10, lineHeight: 1.55, color: '#6b7280' }}>
+        <div style={{ padding: '10px 12px 12px', borderTop: `1px solid ${CLAY.surf2}`, fontSize: FS.lg, lineHeight: 1.55, color: CLAY.textMid }}>
           <div>Net Asset = Net Worth + Net Property</div>
           <div>Expected Net Asset starts at {fmtNum(Number(expectedNetAssetBaseValue || DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE), displayCurrency)} in {expectedNetAssetBaseMonth || DEFAULT_EXPECTED_NET_ASSET_BASE_MONTH} and adds each month&apos;s Net Income after that.</div>
           <div>Inflation uses U.S. CPI monthly change from the U.S. Bureau of Labor Statistics; unreleased months stay blank.</div>
         </div>
       </div>
+    </div>
+  );
+
+  const SummaryAnalyticsView = (
+    <div>
+      {SummaryView}
+      {StatisticsView}
     </div>
   );
 
@@ -2066,14 +2100,9 @@ export default function FinancesTab({
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100dvh - 210px)', padding: '0 16px' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', paddingBottom: 12 }}>
         <select value={displayCurrency} onChange={e => changeDisplayCurrency(e.target.value)}
-          style={{ fontFamily: MONO, fontSize: 12, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '7px 10px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
+          style={{ fontFamily: MONO, fontSize: FS.lg, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 10, padding: '7px 10px', color: '#1a1a1a', cursor: 'pointer', outline: 'none' }}>
           {ALL_CUR.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button onClick={() => fileRef.current?.click()} disabled={extracting}
-          style={{ ...S.btnGhost, padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 5, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10 }}>
-          {extracting ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
-          <span style={{ fontSize: 12 }}>Scan</span>
-        </button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 148 }}>
         {chatMessages.map((msg, i) => (
@@ -2082,7 +2111,7 @@ export default function FinancesTab({
               maxWidth: '80%', padding: '10px 14px', borderRadius: 14,
               background: msg.role === 'user' ? '#1a1a1a' : '#f3f4f6',
               color: msg.role === 'user' ? '#fff' : '#1a1a1a',
-              fontFamily: MONO, fontSize: 12, lineHeight: 1.5,
+              fontFamily: MONO, fontSize: FS.lg, lineHeight: 1.5,
               borderBottomRightRadius: msg.role === 'user' ? 4 : 14,
               borderBottomLeftRadius: msg.role === 'assistant' ? 4 : 14,
             }}>{msg.content}</div>
@@ -2090,7 +2119,7 @@ export default function FinancesTab({
         ))}
         {chatLoading && (
           <div style={{ display: 'flex' }}>
-            <div style={{ padding: '10px 14px', borderRadius: 14, borderBottomLeftRadius: 4, background: '#f3f4f6', fontFamily: MONO, fontSize: 12, color: '#9ca3af' }}>Thinking…</div>
+            <div style={{ padding: '10px 14px', borderRadius: 14, borderBottomLeftRadius: 4, background: '#f3f4f6', fontFamily: MONO, fontSize: FS.lg, color: '#9ca3af' }}>Thinking…</div>
           </div>
         )}
         <div ref={chatEndRef} />
@@ -2102,14 +2131,14 @@ export default function FinancesTab({
         bottom: 'calc(78px + env(safe-area-inset-bottom, 0px))',
         width: 'min(448px, calc(100vw - 32px))',
         padding: '10px 16px 0',
-        background: 'linear-gradient(to top, #f8f9fa 78%, rgba(248,249,250,0.0))',
+        background: `linear-gradient(to top, ${CLAY.bg} 78%, rgba(245,245,245,0.0))`,
         zIndex: 35,
       }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input value={chatInput} onChange={e => setChatInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendChat()}
-            placeholder="Ask about finances or a live stock price…" style={{ ...S.input, flex: 1, background: '#fff', borderRadius: 16, padding: '12px 16px', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }} />
-          <button onClick={sendChat} disabled={chatLoading} style={{ ...S.btnDark, width: 'auto', minWidth: 54, padding: '12px 14px', borderRadius: 16, boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}>
+            placeholder="Ask about finances or a live stock price…" style={{ ...S.input, flex: 1, padding: '12px 16px', boxShadow: CLAY.shadowSm }} />
+          <button onClick={sendChat} disabled={chatLoading} style={{ ...S.btnDark, width: 'auto', minWidth: 54, padding: '12px 14px' }}>
             <Send size={14} />
           </button>
         </div>
@@ -2119,13 +2148,13 @@ export default function FinancesTab({
 
   /* ── SETTINGS VIEW ── */
   const SettingsView = (
-    <div style={{ padding: '0 16px 80px' }}>
+    <div style={{ padding: embedded ? '0 0 80px' : '0 16px 80px' }}>
       {/* xAI key */}
       <div style={S.card}>
         <div style={{ ...S.label, marginBottom: 12 }}>xAI API Key</div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
           <input type={showXaiKey ? 'text' : 'password'} value={xaiApiKey}
-            onChange={e => setXaiApiKey(e.target.value)} placeholder="xai-…" style={{ ...S.input, flex: 1 }} />
+            onChange={e => setXaiApiKey(e.target.value)} placeholder="xai-…" autoComplete="new-password" style={{ ...S.input, flex: 1 }} />
           <button onClick={() => setShowXaiKey(v => !v)} style={{ ...S.btnGhost, padding: '8px 10px' }}>
             {showXaiKey ? <EyeOff size={15} /> : <Eye size={15} />}
           </button>
@@ -2136,7 +2165,7 @@ export default function FinancesTab({
         <div style={{ ...S.label, marginBottom: 8, marginTop: 12 }}>Model</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <select value={xaiModel} onChange={e => changeXaiModel(e.target.value)}
-            style={{ ...S.select, flex: 1, fontSize: 12 }}>
+            style={{ ...S.select, flex: 1, fontSize: FS.lg }}>
             {xaiModels.length === 0
               ? <option value={xaiModel}>{xaiModel}</option>
               : xaiModels.map(m => <option key={m} value={m}>{m}</option>)
@@ -2150,91 +2179,22 @@ export default function FinancesTab({
         <div style={{ ...S.label, marginBottom: 8, marginTop: 14 }}>Vision Model (for PDF/Image scan)</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <select value={visionModel} onChange={e => { setVisionModel(e.target.value); saveUserSetting('vision_model', e.target.value); }}
-            style={{ ...S.select, flex: 1, fontSize: 12 }}>
+            style={{ ...S.select, flex: 1, fontSize: FS.lg }}>
             {xaiModels.length === 0
               ? <option value={visionModel}>{visionModel}</option>
               : xaiModels.map(m => <option key={m} value={m}>{m}</option>)
             }
           </select>
         </div>
-        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Used for AI chat and statement scanning. Tap refresh to load models from xAI.</div>
-      </div>
-
-      {/* Expense list setting */}
-      <div style={S.card}>
-        <div style={{ ...S.label, marginBottom: 8 }}>Load Expenses Settings</div>
-        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>List Name</div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <input value={homeListName} onChange={e => setHomeListName(e.target.value)}
-            placeholder="Home" style={{ ...S.input, flex: 1 }} />
-          <button onClick={() => saveUserSetting('home_list_name', homeListName).then(() => showToast?.('Saved'))}
-            style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
-        </div>
-        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>Person (display name in expense list)</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input value={expensePerson} onChange={e => setExpensePerson(e.target.value)}
-            placeholder="e.g. Renee" style={{ ...S.input, flex: 1 }} />
-          <button onClick={() => saveUserSetting('expense_person', expensePerson).then(() => showToast?.('Saved'))}
-            style={{ ...S.btnDark, padding: '8px 14px' }}><Check size={14} /></button>
-        </div>
-        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>Leave blank to use your own membership display name in that list.</div>
-      </div>
-
-      <div style={S.card}>
-        <div style={{ ...S.label, marginBottom: 8 }}>Expected Net Asset</div>
-        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>Base Month</div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <input
-            type="month"
-            value={expectedNetAssetBaseMonth}
-            onChange={e => setExpectedNetAssetBaseMonth(e.target.value)}
-            style={{ ...S.input, flex: 1 }}
-          />
-          <button
-            onClick={() => saveUserSetting('expected_net_asset_base_month', expectedNetAssetBaseMonth).then(() => showToast?.('Saved'))}
-            style={{ ...S.btnDark, padding: '8px 14px' }}
-          >
-            <Check size={14} />
-          </button>
-        </div>
-        <div style={{ ...S.label, fontSize: 9, marginBottom: 4 }}>Base Value</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="number"
-            value={expectedNetAssetBaseValue}
-            onChange={e => setExpectedNetAssetBaseValue(e.target.value)}
-            placeholder="19000000"
-            style={{ ...S.input, flex: 1 }}
-          />
-          <button
-            onClick={() => saveUserSetting('expected_net_asset_base_value', String(expectedNetAssetBaseValue || DEFAULT_EXPECTED_NET_ASSET_BASE_VALUE)).then(() => showToast?.('Saved'))}
-            style={{ ...S.btnDark, padding: '8px 14px' }}
-          >
-            <Check size={14} />
-          </button>
-        </div>
-        <div style={{ ...S.label, fontSize: 9, opacity: 0.6, marginTop: 6 }}>
-          Future months calculate automatically from this starting month and add each month&apos;s Net Income after that.
-        </div>
+        <div style={{ ...S.label, fontSize: FS.lg, opacity: 0.6, marginTop: 6 }}>Used for AI chat and statement scanning. Tap refresh to load models from xAI.</div>
       </div>
 
       {/* Data management */}
       <div style={S.card}>
         <div style={{ ...S.label, marginBottom: 12 }}>Data Management</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <button onClick={exportData} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <Download size={14} /> Export JSON
-            </button>
-            <button onClick={exportCSV} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <Download size={14} /> Export CSV
-            </button>
-            <button onClick={() => importCsvRef.current?.click()} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <Upload size={14} /> Import CSV
-            </button>
-            <button onClick={() => importJsonRef.current?.click()} style={{ ...S.btnGhost, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <Upload size={14} /> Import JSON
-            </button>
+          <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', lineHeight: 1.5 }}>
+            Use Settings &gt; Full App Backup to import or export finance data together with expenses, securities, watchlists, news, travel, and app settings.
           </div>
           <button onClick={() => setConfirmClearData(true)} style={{ ...S.btnRed, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <AlertTriangle size={14} /> Clear All Financial Data
@@ -2250,13 +2210,10 @@ export default function FinancesTab({
       {/* Extraction review */}
       {pendingExtraction && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          style={modalBackdropStyle({ align: 'sheet', zIndex: 100 })}>
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>Statement Extraction Review</div>
-              <button onClick={() => setPendingExtraction(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
-            </div>
+            style={modalSurfaceStyle({ sheet: true, maxWidth: 520, maxHeight: '90vh' })}>
+            <ModalHeader title="Statement Extraction Review" onClose={() => setPendingExtraction(null)} />
             {/* Date */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ ...S.label, marginBottom: 6 }}>Statement Date</div>
@@ -2270,13 +2227,13 @@ export default function FinancesTab({
             {pendingExtraction.items.map((item, idx) => (
               <div key={idx} style={{ background: item.matched_account_id ? '#f0fdf4' : '#fafafa', border: `1px solid ${item.matched_account_id ? '#bbf7d0' : '#e5e7eb'}`, borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', minWidth: 80 }}>{item.type}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>{item.currency} {Number(item.balance).toLocaleString()}</span>
-                  {item.account_number && <span style={{ fontFamily: MONO, fontSize: 10, color: '#9ca3af' }}>···{item.account_number}</span>}
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', minWidth: 80 }}>{item.type}</span>
+                  <span style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 600 }}>{item.currency} {Number(item.balance).toLocaleString()}</span>
+                  {item.account_number && <span style={{ fontFamily: MONO, fontSize: FS.lg, color: '#9ca3af' }}>···{item.account_number}</span>}
                 </div>
                 <select value={item.matched_account_id}
                   onChange={e => setPendingExtraction(p => ({ ...p, items: p.items.map((it, i) => i === idx ? { ...it, matched_account_id: e.target.value } : it) }))}
-                  style={{ ...S.select, fontSize: 12 }}>
+                  style={{ ...S.select, fontSize: FS.lg }}>
                   <option value="">— Skip this account —</option>
                   {accounts.map(a => (
                     <option key={a.id} value={a.id}>{a.bank} / {a.account_name} ({a.currency}){a.account_number ? ` ···${a.account_number}` : ''}</option>
@@ -2288,12 +2245,12 @@ export default function FinancesTab({
               </div>
             ))}
             <button onClick={() => setShowRaw(v => !v)}
-              style={{ ...S.btnGhost, width: '100%', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+              style={{ ...S.btnGhost, width: '100%', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: FS.lg }}>
               <ChevronDown size={11} style={{ transform: showRaw ? 'none' : 'rotate(-90deg)' }} />
               Raw Grok response
             </button>
             {showRaw && (
-              <pre style={{ fontFamily: MONO, fontSize: 9, background: '#f3f4f6', borderRadius: 8, padding: 10, maxHeight: 120, overflow: 'auto', marginBottom: 12, whiteSpace: 'pre-wrap' }}>
+              <pre style={{ fontFamily: MONO, fontSize: FS.lg, background: '#f3f4f6', borderRadius: 8, padding: 10, maxHeight: 120, overflow: 'auto', marginBottom: 12, whiteSpace: 'pre-wrap' }}>
                 {pendingExtraction.raw}
               </pre>
             )}
@@ -2310,14 +2267,11 @@ export default function FinancesTab({
       {/* Import preview */}
       {importPreview && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          style={modalBackdropStyle({ align: 'sheet', zIndex: 100 })}>
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 480 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>Import Preview</div>
-              <button onClick={() => setImportPreview(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
-            </div>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: '#374151', marginBottom: 8 }}>
+            style={modalSurfaceStyle({ sheet: true, maxWidth: 480 })}>
+            <ModalHeader title="Import Preview" onClose={() => setImportPreview(null)} />
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#374151', marginBottom: 8 }}>
               {importPreview.accounts?.length || 0} accounts
               · {importPreview.snapshots?.length || 0} snapshots
               {Object.keys(importPreview.dateRates || {}).length > 0 && (
@@ -2326,7 +2280,7 @@ export default function FinancesTab({
                 </span>
               )}
             </div>
-            <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 16, fontFamily: MONO, fontSize: 12, color: '#6b7280' }}>
+            <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 16, fontFamily: MONO, fontSize: FS.lg, color: '#6b7280' }}>
               {importPreview.accounts?.slice(0, 10).map((a, i) => (
                 <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid #f3f4f6' }}>
                   {a.bank} / {a.account_name} ({a.currency}, {a.category})
@@ -2351,13 +2305,10 @@ export default function FinancesTab({
       {/* Add account */}
       {showAddAcc && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          style={modalBackdropStyle({ align: 'sheet', zIndex: 100 })}>
           <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxWidth: 480 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <div style={{ ...S.label, fontSize: 14, color: '#1a1a1a' }}>Add Account</div>
-              <button onClick={() => setShowAddAcc(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
-            </div>
+            style={modalSurfaceStyle({ sheet: true, maxWidth: 480 })}>
+            <ModalHeader title="Add Account" onClose={() => setShowAddAcc(false)} style={{ marginBottom: 20 }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
@@ -2407,16 +2358,16 @@ export default function FinancesTab({
       {/* New snapshot date confirmation modal */}
       {showNewSnapModal && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          style={modalBackdropStyle({ zIndex: 110 })}>
           <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-            style={{ background: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
-            <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, marginBottom: 8 }}>New Snapshot</div>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+            style={modalSurfaceStyle({ maxWidth: 380 })}>
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, marginBottom: 8 }}>New Snapshot</div>
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', marginBottom: 16 }}>
               Confirm the snapshot date. Balances will be copied from the most recent data.
             </div>
             <input type="date" value={newSnapDate} max={TODAY}
               onChange={e => setNewSnapDate(e.target.value)}
-              style={{ ...S.input, width: '100%', fontSize: 14, marginBottom: 20 }} />
+              style={{ ...S.input, width: '100%', fontSize: FS.lg, marginBottom: 20 }} />
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setShowNewSnapModal(false)} style={{ ...S.btnGhost, flex: 1 }}>Cancel</button>
               <button onClick={async () => {
@@ -2431,11 +2382,11 @@ export default function FinancesTab({
       {/* Confirm delete account */}
       {confirmDeleteAcc && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          style={modalBackdropStyle({ zIndex: 110 })}>
           <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-            style={{ background: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
-            <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Delete Account?</div>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
+            style={modalSurfaceStyle({ maxWidth: 380 })}>
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700, marginBottom: 8 }}>Delete Account?</div>
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', marginBottom: 20 }}>
               {confirmDeleteAcc.bank} / {confirmDeleteAcc.account_name} and all its snapshots will be deleted.
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
@@ -2449,14 +2400,14 @@ export default function FinancesTab({
       {/* Confirm delete snapshot */}
       {confirmDeleteSnap && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          style={modalBackdropStyle({ zIndex: 110 })}>
           <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-            style={{ background: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
+            style={modalSurfaceStyle({ maxWidth: 380 })}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
               <AlertTriangle size={20} color="#dc2626" />
-              <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700 }}>Delete Snapshot?</div>
+              <div style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700 }}>Delete Snapshot?</div>
             </div>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', marginBottom: 20 }}>
               All balances for <strong>{fmtDate(selDate)}</strong> will be deleted, including the exchange rates for that date.
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
@@ -2470,14 +2421,14 @@ export default function FinancesTab({
       {/* Confirm clear all data */}
       {confirmClearData && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          style={modalBackdropStyle({ zIndex: 110 })}>
           <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-            style={{ background: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
+            style={modalSurfaceStyle({ maxWidth: 380 })}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
               <AlertTriangle size={20} color="#dc2626" />
-              <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700 }}>Clear All Data?</div>
+              <div style={{ fontFamily: MONO, fontSize: FS.lg, fontWeight: 700 }}>Clear All Data?</div>
             </div>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
+            <div style={{ fontFamily: MONO, fontSize: FS.lg, color: '#6b7280', marginBottom: 20 }}>
               All accounts, snapshots, and exchange rates will be deleted. Your xAI API key will be preserved.
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
@@ -2492,15 +2443,16 @@ export default function FinancesTab({
 
   /* ── main render ── */
   return (
-    <div className="se" style={{ fontFamily: MONO, maxWidth: 480, margin: '0 auto', minHeight: '100vh', background: '#f8f9fa' }}>
+    <div className="se" style={{ fontFamily: MONO, minHeight: embedded ? 'auto' : '100vh', background: embedded ? 'transparent' : CLAY.bg, ...(embedded && isWide ? {} : { maxWidth: 480, margin: '0 auto' }) }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       {TopBar}
-      {(activeView === 'table' || activeView === 'summary' || activeView === 'statistics') && DatePills}
-      {(activeView === 'table' || activeView === 'summary' || activeView === 'statistics') && RatesBar}
+      {showPortfolioControls && DatePills}
+      {showPortfolioControls && RatesBar}
       <div style={{ overflowY: 'auto' }}>
         {activeView === 'table'   && TableView}
         {activeView === 'summary' && SummaryView}
         {activeView === 'statistics' && StatisticsView}
+        {activeView === 'summary_analytics' && SummaryAnalyticsView}
         {activeView === 'chat'    && ChatView}
         {activeView === 'settings'&& SettingsView}
       </div>

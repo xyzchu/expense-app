@@ -31,13 +31,25 @@ export function usePushNotifications(user, currentList, onError) {
       if (!reg) return;
       const sub = await reg.pushManager.getSubscription();
       if (!sub) { setSubscribed(false); return; }
-      const { data } = await sb
+      const { data, error } = await sb
         .from('push_subscriptions')
         .select('id')
         .eq('user_id', user.id)
         .eq('list_id', currentList.id)
         .maybeSingle();
-      setSubscribed(!!data);
+      if (data) {
+        setSubscribed(true);
+        return;
+      }
+      if (error) {
+        setSubscribed(false);
+        return;
+      }
+      const { error: saveError } = await sb.from('push_subscriptions').upsert(
+        { user_id: user.id, list_id: currentList.id, subscription: sub.toJSON() },
+        { onConflict: 'user_id,list_id' }
+      );
+      setSubscribed(!saveError);
     })();
   }, [user, currentList]);
 

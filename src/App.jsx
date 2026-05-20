@@ -7,22 +7,36 @@ import {
   Settings as SettingsIcon, ChevronDown, ChevronUp, ArrowRight,
   RefreshCw, Eye, EyeOff, TrendingUp
 } from 'lucide-react';
-import {
-  XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
-  PieChart, Pie, Cell
-} from 'recharts';
 import sb from './supabaseClient';
-import FinancesTab from './FinancesTab';
-import TransactionsTab from './TransactionsTab';
-import SecuritiesStatisticsTab from './SecuritiesStatisticsTab';
-import ShopperTab from './ShopperTab';
+const FinancesTab = React.lazy(() => import('./FinancesTab'));
+const TransactionsTab = React.lazy(() => import('./TransactionsTab'));
+const SecuritiesStatisticsTab = React.lazy(() => import('./SecuritiesStatisticsTab'));
+const ShopperTab = React.lazy(() => import('./ShopperTab'));
+const TravelTabLazy = React.lazy(() => import('./TravelTab'));
+const MailTabLazy = React.lazy(() => import('./MailTab'));
+const TasksTabLazy = React.lazy(() => import('./TasksTab'));
+const StatsTabLazy = React.lazy(() => import('./StatsTab'));
+const SettingsTabLazy = React.lazy(() => import('./SettingsTab'));
+const InvestingTabLazy = React.lazy(() => import('./InvestingTab'));
+const InvestingPickerLazy = React.lazy(() => import('./InvestingPicker'));
+const NavLayoutEditorLazy = React.lazy(() => import('./NavLayoutEditor'));
+import { buildNavPool, buildDefaultLayout } from './navConfig';
 import { usePushNotifications } from './usePushNotifications';
+import { useIsWide } from './hooks';
+import { SegmentedTabs } from './ui';
+
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ══════════════════════════════════════════════════════════════ */
+
+const SIDEBAR_W = 200;
 
 /* ══════════════════════════════════════════════════════════════
    THEME
    ══════════════════════════════════════════════════════════════ */
 
-const MONO = '"IBM Plex Mono", monospace';
+import { MONO, FS, FW, CLAY } from './theme';
+import { NO_DEC, CURR_FLAG, ALL_CUR, BASE_CATS, PERSON_COLORS, CUST_COLORS, fmt, getCat, s, SHELL_HEADING_STYLE } from './appConstants';
 
 const THEME_CSS = `
   .se * { box-sizing: border-box; }
@@ -48,27 +62,13 @@ const FALLBACK_RATES_USD = {
   THB:34.2, NZD:1.70, SGD:1.34, KRW:1380, INR:84.5, VND:25400, IDR:15800
 };
 
-const NO_DEC = new Set(['JPY','KRW','VND','IDR']);
 const CURR_SYM = {'¥':'CNY','€':'EUR','£':'GBP','₩':'KRW','₹':'INR','฿':'THB'};
-const CURR_FLAG = {AUD:'🇦🇺',USD:'🇺🇸',EUR:'🇪🇺',GBP:'🇬🇧',JPY:'🇯🇵',CNY:'🇨🇳',HKD:'🇭🇰',THB:'🇹🇭',NZD:'🇳🇿',SGD:'🇸🇬',KRW:'🇰🇷',INR:'🇮🇳',VND:'🇻🇳',IDR:'🇮🇩'};
 const CURR_WORDS = [
   [/\b(yuan|rmb|renminbi)\b/i,'CNY'],[/\byen\b/i,'JPY'],[/\bwon\b/i,'KRW'],
   [/\bbaht\b/i,'THB'],[/\brupees?\b/i,'INR'],[/\beuros?\b/i,'EUR'],
   [/\bpounds?\b(?!\s+of\b)/i,'GBP'],[/\bdollars?\b/i,'USD']
 ];
-const ALL_CUR = ['AUD','USD','EUR','GBP','JPY','CNY','HKD','THB','NZD','SGD','KRW','INR','VND','IDR'];
 
-const BASE_CATS = {
-  Restaurant:{emoji:'🍽️',c:'#f97316',bg:'#fff7ed',tx:'#c2410c'},
-  Groceries:{emoji:'🛒',c:'#22c55e',bg:'#f0fdf4',tx:'#15803d'},
-  Transport:{emoji:'🚗',c:'#3b82f6',bg:'#eff6ff',tx:'#1d4ed8'},
-  Utilities:{emoji:'💡',c:'#eab308',bg:'#fefce8',tx:'#a16207'},
-  Travel:{emoji:'✈️',c:'#a855f7',bg:'#faf5ff',tx:'#7e22ce'},
-  Home:{emoji:'🏠',c:'#ec4899',bg:'#fdf2f8',tx:'#be185d'},
-  Income:{emoji:'💰',c:'#10b981',bg:'#ecfdf5',tx:'#047857'},
-  Settlement:{emoji:'💸',c:'#64748b',bg:'#f1f5f9',tx:'#334155'},
-  Other:{emoji:'📦',c:'#6b7280',bg:'#f3f4f6',tx:'#4b5563'},
-};
 const CAT_KW = {
   Income:/\b(salary|wage|income|paycheck|payroll|dividend|interest|bonus|commission|freelance|refund|reimburs|rent|rental|revenue)\b/i,
   Restaurant:/\b(restaurant|dinner|lunch|breakfast|brunch|cafe|coffee|tea|eat|food|drink|bar|pub|pizza|burger|sushi|ramen|noodle|bbq|grill|takeaway|takeout|delivery|uber\s?eats|doordash|meal|snack|bubble\s?tea|boba|dessert|cake|ice\s?cream|mcdonald|kfc|subway)\b/i,
@@ -78,9 +78,13 @@ const CAT_KW = {
   Travel:/\b(flight|hotel|hostel|airbnb|booking|travel|airport|luggage|visa|passport|tour|trip|holiday|vacation|accommodation|resort|cruise)\b/i,
   Home:/\b(furniture|ikea|bed|sofa|couch|chair|table|desk|lamp|curtain|rug|kitchen|bathroom|cleaning|laundry|repair|maintenance|garden|tool|hardware|bunnings)\b/i,
 };
-const CUST_COLORS = ['#06b6d4','#f43f5e','#8b5cf6','#14b8a6','#f59e0b','#6366f1','#10b981','#e11d48'];
-const PERSON_COLORS = ['#3b82f6','#ec4899','#f59e0b','#22c55e','#a855f7','#06b6d4','#ef4444','#84cc16'];
 const STOP = new Set('the and for from with this that have been were they them their what when where which who will would could should about into over after before between under through during each just also than very some only other most paid owes owed split share'.split(' '));
+const toTitleCase = s => s ? s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()) : s;
+const personTagStyle = (name, names) => {
+  const idx = names.indexOf(name);
+  const c = idx >= 0 ? PERSON_COLORS[idx % PERSON_COLORS.length] : null;
+  return c ? { background: c + '25', color: c } : { background: '#f3f4f6', color: '#6b7280' };
+};
 const PAYMENT_PREFIXES = [
   /^sq\s*\*+\s*/i,
   /^sq\s+/i,
@@ -110,13 +114,187 @@ const KNOWN_MERCHANT_PATTERNS = [
    UTILITY FUNCTIONS
    ══════════════════════════════════════════════════════════════ */
 
-const fmt = (n, cur='AUD') => {
-  const d = NO_DEC.has(cur)?0:2;
-  try { return new Intl.NumberFormat('en-AU',{style:'currency',currency:cur,minimumFractionDigits:d,maximumFractionDigits:d}).format(n); }
-  catch { return `${cur} ${n.toFixed(d)}`; }
-};
 
 const today = () => new Date().toISOString().slice(0,10);
+const makeRecurringId = () => `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+const clampRecurringInterval = (value) => Math.max(1, Math.min(999, parseInt(value, 10) || 1));
+const formatLocalIsoDate = (date) => (
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+);
+const endOfMonthFor = (dateStr = today()) => {
+  const [year, month] = String(dateStr || today()).split('-').map(Number);
+  const now = new Date();
+  return formatLocalIsoDate(new Date(year || now.getFullYear(), month || (now.getMonth() + 1), 0));
+};
+const addRecurringInterval = (dateStr, count = 1, unit = 'months') => {
+  const [year, month, day] = String(dateStr || today()).split('-').map(Number);
+  const date = new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1);
+  if (unit === 'days') date.setDate(date.getDate() + count);
+  else if (unit === 'weeks') date.setDate(date.getDate() + (count * 7));
+  else date.setMonth(date.getMonth() + count);
+  return formatLocalIsoDate(date);
+};
+const addRecurringDueDate = (dateStr, count = 1, unit = 'months', dateMode = 'date') => {
+  if (dateMode === 'month-end') {
+    const base = endOfMonthFor(dateStr);
+    return endOfMonthFor(addRecurringInterval(base, count, 'months'));
+  }
+  return addRecurringInterval(dateStr, count, unit);
+};
+const endOfCurrentMonth = () => {
+  const now = new Date();
+  return formatLocalIsoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+};
+const extractRecurringExpenseScheduleHint = (raw) => {
+  const source = String(raw || '');
+  const eomPattern = /\b(?:eom|month\s*end|end\s+of\s+(?:each\s+|every\s+|the\s+)?month|last\s+day\s+of\s+(?:each\s+|every\s+|the\s+)?month)\b/i;
+  if (!eomPattern.test(source)) return { text: source, schedule: null };
+  return {
+    text: source.replace(eomPattern, ' ').replace(/\s+/g, ' ').trim(),
+    schedule: { intervalCount: 1, intervalUnit: 'months', nextDueDate: endOfCurrentMonth(), dateMode: 'month-end' },
+  };
+};
+const advanceRecurringDueDate = (dateStr, count = 1, unit = 'months', dateMode = 'date') => {
+  let next = addRecurringDueDate(dateStr || today(), clampRecurringInterval(count), unit, dateMode);
+  const now = today();
+  let guard = 0;
+  while (next <= now && guard < 120) {
+    next = addRecurringDueDate(next, clampRecurringInterval(count), unit, dateMode);
+    guard += 1;
+  }
+  return next;
+};
+const normalizeRecurringTemplate = (template) => {
+  const rawText = typeof template === 'string' ? template : template?.text;
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+  const intervalUnit = ['days', 'weeks', 'months'].includes(template?.intervalUnit) ? template.intervalUnit : 'months';
+  return {
+    id: template?.id || makeRecurringId(),
+    text,
+    category: template?.category || null,
+    intervalCount: clampRecurringInterval(template?.intervalCount || 1),
+    intervalUnit,
+    nextDueDate: template?.nextDueDate || today(),
+    dateMode: template?.dateMode === 'month-end' ? 'month-end' : 'date',
+    lastActionDate: template?.lastActionDate || null,
+  };
+};
+
+const DEFAULT_NOTIFICATION_PREFS = {
+  expense: true,
+  settlement: true,
+  news: true,
+  pnl: true,
+  ai: true,
+};
+
+const readSavedNavLayout = () => {
+  try {
+    const raw = localStorage.getItem('se_nav_layout');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const cacheNavLayout = (layout) => {
+  try {
+    localStorage.setItem('se_nav_layout', JSON.stringify(layout));
+  } catch {
+    // Local cache is best-effort; Supabase is the source of truth when signed in.
+  }
+};
+
+const EXPENSE_LIST_CACHE_KEY = 'splitease_list';
+const EXPENSE_LIST_META_CACHE_KEY = 'splitease_list_meta';
+
+const readCachedExpenseList = () => {
+  try {
+    const raw = localStorage.getItem(EXPENSE_LIST_META_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.id ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const cacheExpenseList = (list) => {
+  if (!list?.id) return;
+  try {
+    localStorage.setItem(EXPENSE_LIST_CACHE_KEY, list.id);
+    localStorage.setItem(EXPENSE_LIST_META_CACHE_KEY, JSON.stringify({
+      id: list.id,
+      name: list.name,
+      default_currency: list.default_currency,
+      invite_code: list.invite_code,
+      myDisplayName: list.myDisplayName,
+    }));
+  } catch {
+    // Best effort only. Supabase still verifies access on startup.
+  }
+};
+
+const clearCachedExpenseList = () => {
+  try {
+    localStorage.removeItem(EXPENSE_LIST_CACHE_KEY);
+    localStorage.removeItem(EXPENSE_LIST_META_CACHE_KEY);
+  } catch {}
+};
+
+const withTimeout = (promise, ms, label = 'Request') => (
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    }),
+  ])
+);
+
+const uniqueExistingIds = (ids, validIds) => {
+  if (!Array.isArray(ids)) return [];
+  const seen = new Set();
+  return ids.filter(id => {
+    if (!validIds.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+
+const normalizeNavLayout = (layout, defaultLayout, navPool) => {
+  const validIds = new Set(navPool.map(item => item.id));
+  const poolMap = new Map(navPool.map(item => [item.id, item]));
+  const safeLayout = layout && typeof layout === 'object' && !Array.isArray(layout) ? layout : {};
+  const nav = uniqueExistingIds(safeLayout.nav, validIds);
+  const safeNav = nav.length > 0 ? nav : uniqueExistingIds(defaultLayout.nav, validIds);
+  const navIds = new Set(safeNav);
+  const missingMenuIds = navPool
+    .filter(item => !item.isInvestingTrigger && !navIds.has(item.id))
+    .map(item => item.id);
+  const rawGroups = Array.isArray(safeLayout.investingGroups)
+    ? safeLayout.investingGroups
+    : defaultLayout.investingGroups;
+  const groupBuckets = new Map();
+  for (const group of rawGroups) {
+    if (!group || typeof group.label !== 'string') continue;
+    groupBuckets.set(group.label, uniqueExistingIds(group.items, validIds).filter(id => !navIds.has(id)));
+  }
+  for (const id of missingMenuIds) {
+    const item = poolMap.get(id);
+    const label = item?.defaultMoreGroup || item?.defaultInvestingGroup || 'Main';
+    const items = groupBuckets.get(label) || [];
+    if (!items.includes(id)) groupBuckets.set(label, [...items, id]);
+  }
+  const investingGroups = Array.from(groupBuckets.entries())
+    .map(([label, items]) => ({ label, items }))
+    .filter(group => group && typeof group.label === 'string')
+    .filter(group => group.items.length > 0);
+
+  return { nav: safeNav, investingGroups };
+};
 
 const sigWords = (text) =>
   text.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !STOP.has(w));
@@ -168,6 +346,39 @@ const prettifyMerchantText = (text) => {
   return normalized.replace(/\b\w/g, (ch) => ch.toUpperCase());
 };
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const parseNamedExactShares = (text, names, total) => {
+  const absTotal = Math.abs(Number(total || 0));
+  if (!absTotal || !names.length) return null;
+
+  const sign = Number(total) < 0 ? -1 : 1;
+  const explicit = {};
+  for (const name of names) {
+    const re = new RegExp(`(?:^|\\s)${escapeRegExp(name)}\\s+\\$?\\s*(\\d+(?:\\.\\d+)?)\\b`, 'i');
+    const match = String(text || '').match(re);
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value >= 0) explicit[name] = value;
+  }
+
+  const specifiedTotal = Object.values(explicit).reduce((sum, value) => sum + value, 0);
+  if (!Object.keys(explicit).length || specifiedTotal > absTotal + 0.005) return null;
+
+  const shares = {};
+  for (const [name, value] of Object.entries(explicit)) shares[name] = value * sign;
+
+  const others = names.filter((name) => !Object.prototype.hasOwnProperty.call(explicit, name));
+  const remainder = Math.max(0, absTotal - specifiedTotal) * sign;
+  if (others.length) {
+    others.forEach((name) => { shares[name] = remainder / others.length; });
+  } else if (Object.keys(explicit).length === 1) {
+    shares[Object.keys(explicit)[0]] = total;
+  }
+
+  return shares;
+};
+
 const cvt = (amount, from, to, rates) => {
   if (from === to || !from || !to) return amount;
   const fr = rates[from] || 1, tr = rates[to] || 1;
@@ -199,36 +410,63 @@ const detectCategory = (text, overrides, customCats) => {
   const sw = sigWords(normalized);
   for (const w of sw) { if (overrides[w]) return overrides[w]; }
   for (const [cat, re] of Object.entries(CAT_KW)) { if (re.test(normalized)) return cat; }
-  return 'Restaurant';
+  return 'Other';
 };
 
-const getCat = (name, customCats, members) => {
-  if (BASE_CATS[name]) return BASE_CATS[name];
-  if (customCats[name]) return customCats[name];
-  const mi = members.findIndex(m => m.display_name === name);
-  if (mi >= 0) return {emoji:'👤', c: PERSON_COLORS[mi % PERSON_COLORS.length], bg:'#eef2ff', tx:'#4338ca'};
-  return BASE_CATS.Other;
+const categoryNamesForHints = (members, customCats) => (
+  Array.from(new Set([
+    ...Object.keys(BASE_CATS),
+    ...Object.keys(customCats || {}),
+    ...(members || []).map(m => m.display_name).filter(Boolean),
+  ]))
+);
+
+const categoryNameFromHint = (hint, categories) => {
+  const clean = normalizeMerchantText(String(hint || '').replace(/^#/, ''));
+  if (!clean) return null;
+  return categories.find(c => normalizeMerchantText(c) === clean) || null;
 };
 
-/* ── Shared inline style helpers ── */
-const s = {
-  page: { minHeight:'100vh', background:'#FAFAF5', color:'#1a1a1a', fontFamily:MONO, WebkitFontSmoothing:'antialiased' },
-  centerPage: { minHeight:'100vh', background:'#FAFAF5', display:'flex', alignItems:'center', justifyContent:'center', padding:16, fontFamily:MONO, color:'#1a1a1a' },
-  card: { background:'#fff', borderRadius:16, boxShadow:'0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)', padding:'24px' },
-  input: { width:'100%', background:'#F0F0EA', border:'none', borderRadius:12, padding:'12px 14px', fontSize: 16, color:'#1a1a1a', outline:'none', letterSpacing:'0.04em', fontFamily:MONO },
-  inputFocus: { background:'#e8e8df' },
-  label: { fontSize:10, letterSpacing:'0.12em', textTransform:'uppercase', opacity:0.35, fontWeight:700, marginBottom:6, display:'block' },
-  btnDark: { width:'100%', padding:'14px', border:'2px solid #222', background:'#222', color:'#f5f5ee', fontSize: 14, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
-  btnOutline: { width:'100%', padding:'14px', border:'2px solid #bbb', background:'transparent', color:'#1a1a1a', fontSize: 14, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', borderRadius:12, cursor:'pointer', fontFamily:MONO, transition:'all 0.2s' },
-  ghost: { background:'none', border:'none', fontSize: 12, letterSpacing:'0.1em', textTransform:'uppercase', opacity:0.35, cursor:'pointer', padding:'8px 0', color:'#1a1a1a', fontFamily:MONO },
-  tag: (bg,tx) => ({ fontSize:10, letterSpacing:'0.06em', textTransform:'uppercase', padding:'3px 8px', borderRadius:9999, fontWeight:600, display:'inline-block', background:bg||'#f3f4f6', color:tx||'#4b5563' }),
-  chip: (active) => ({ fontSize: 12, letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 14px', borderRadius:9999, border:'none', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, fontWeight: active?700:400, background: active?'#222':'#F0F0EA', color: active?'#f5f5ee':'#1a1a1a', opacity: active?1:0.6 }),
-  sm: (active) => ({ fontSize: 12, letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 14px', borderRadius:12, border:'none', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, background: active?'#222':'#F0F0EA', color: active?'#f5f5ee':'#1a1a1a', fontWeight: active?700:400 }),
-  split: (active) => ({ fontSize:10, letterSpacing:'0.06em', textTransform:'uppercase', padding:'6px 10px', borderRadius:12, border: active?'1px solid #222':'1px solid #ddd', background: active?'#222':'#fff', color: active?'#f5f5ee':'#1a1a1a', cursor:'pointer', transition:'all 0.2s', fontFamily:MONO, fontWeight: active?700:400 }),
-  tabnum: { fontVariantNumeric:'tabular-nums' },
-  upper: { textTransform:'uppercase', letterSpacing:'0.08em' },
+const extractCategoryHint = (text, categories) => {
+  let next = text;
+  let category = null;
+
+  const hashMatch = next.match(/(^|\s)#([A-Za-z][\w-]*)/);
+  if (hashMatch) {
+    category = categoryNameFromHint(hashMatch[2], categories);
+    if (category) next = next.replace(hashMatch[0], ' ');
+  }
+
+  if (!category) {
+    const sorted = [...categories].sort((a, b) => b.length - a.length);
+    const catPattern = sorted.map(escapeRegExp).join('|');
+    if (catPattern) {
+      const phraseRe = new RegExp(`\\b(?:category|cat)\\s*[:=]?\\s*(${catPattern})\\b`, 'i');
+      const phraseMatch = next.match(phraseRe);
+      if (phraseMatch) {
+        category = categoryNameFromHint(phraseMatch[1], categories);
+        next = next.replace(phraseMatch[0], ' ');
+      }
+    }
+  }
+
+  if (!category) {
+    const sorted = [...categories].sort((a, b) => b.length - a.length);
+    const catPattern = sorted.map(escapeRegExp).join('|');
+    if (catPattern) {
+      const asRe = new RegExp(`\\bas\\s+(${catPattern})\\b`, 'i');
+      const asMatch = next.match(asRe);
+      if (asMatch) {
+        category = categoryNameFromHint(asMatch[1], categories);
+        next = next.replace(asMatch[0], ' ');
+      }
+    }
+  }
+
+  return { text: next, category };
 };
-const SHELL_HEADING_STYLE = { ...s.label, fontSize: 14, color: '#1a1a1a', marginBottom: 8 };
+
+
 
 /* ══════════════════════════════════════════════════════════════
    NLP PARSER
@@ -236,8 +474,13 @@ const SHELL_HEADING_STYLE = { ...s.label, fontSize: 14, color: '#1a1a1a', margin
 
 function parseExpense(raw, members, myName, rates, defCur, overrides, customCats) {
   if (!raw.trim()) return null;
-  const isRefund = /\b(refund|refunded|return|returned|reimburs(?:e|ed|ement)|cashback|cash\s+back|rebate)\b/i.test(raw);
-  let t = raw, cur = null, amt = null;
+  const recurringHintResult = extractRecurringExpenseScheduleHint(raw);
+  const cleanedRaw = recurringHintResult.text || raw;
+  const isRefund = /\b(refund|refunded|return|returned|reimburs(?:e|ed|ement)|cashback|cash\s+back|rebate)\b/i.test(cleanedRaw);
+  const categoryHintResult = extractCategoryHint(cleanedRaw, categoryNamesForHints(members, customCats));
+  const rawWithoutCategoryHint = categoryHintResult.text;
+  const categoryHint = categoryHintResult.category;
+  let t = rawWithoutCategoryHint, cur = null, amt = null;
 
   const sm = t.match(/([¥€£₩₹฿])\s*(\d+(?:\.\d+)?)/);
   if (sm) {
@@ -276,7 +519,7 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
     if (new RegExp(`\\b${n}\\s+paid\\b|\\bpaid\\s+by\\s+${n}\\b`,'i').test(raw)) { paidBy = n; break; }
   }
 
-  let st = raw;
+  let st = rawWithoutCategoryHint;
   for (const n of names) st = st.replace(new RegExp(`\\b${n}\\s+paid\\b|\\bpaid\\s+by\\s+${n}\\b`,'ig'),' ');
 
   let splitType = 'equal', shares = {}, headcount = null;
@@ -285,6 +528,7 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
   const ratioMatch = st.match(/\b(\d+(?:\/\d+)+)\b/);
   const pctMatch = st.match(/\b(\d+)\s*%\s*(\w+)/i);
   const headcountMatch = st.match(/\bfor\s+(\d+)\s+(?:people|persons?|ppl|guests?|friends?|heads?)\b|\b(\d+)\s+(?:people|persons?|ppl|guests?)\b|\bsplit\s+(\d+)\s*ways?\b/i);
+  const namedExactShares = parseNamedExactShares(st, names, total);
 
   let fullPerson = null;
   for (const n of names) {
@@ -297,6 +541,8 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
     splitType = 'personal'; shares = {[paidBy]: total};
   } else if (fullPerson) {
     splitType = 'full'; shares = {[fullPerson]: total};
+  } else if (namedExactShares) {
+    splitType = 'custom'; shares = namedExactShares;
   } else if (headcountMatch) {
     headcount = parseInt(headcountMatch[1] || headcountMatch[2] || headcountMatch[3]);
     if (headcount >= 2 && headcount > names.length) {
@@ -331,10 +577,11 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
     names.forEach(n => { shares[n] = total / names.length; });
   }
 
-  let item = raw;
+  let item = rawWithoutCategoryHint;
   item = item.replace(/[¥€£₩₹฿$]\s*\d+(\.\d+)?/g,' ');
   item = item.replace(/\b\d+(\.\d+)?\s*(AUD|USD|EUR|GBP|JPY|CNY|HKD|THB|NZD|SGD|KRW|INR|VND|IDR)\b/gi,' ');
   item = item.replace(/\b(AUD|USD|EUR|GBP|JPY|CNY|HKD|THB|NZD|SGD|KRW|INR|VND|IDR)\s*\d+(\.\d+)?\b/gi,' ');
+  for (const n of names) item = item.replace(new RegExp(`\\b${escapeRegExp(n)}\\s+\\$?\\s*\\d+(?:\\.\\d+)?\\b`,'gi'),' ');
   item = item.replace(/\b\d+(\.\d+)?\b/g,' ');
   for (const n of names) item = item.replace(new RegExp(`\\b${n}\\s+paid\\b|\\bpaid\\s+by\\s+${n}\\b|\\bfor\\s+${n}\\b|\\b${n}\\s+owes?\\b|\\bowed\\s+by\\s+${n}\\b|\\b100\\s*%\\s*${n}\\b|\\ball\\s+${n}\\b`,'gi'),' ');
   item = item.replace(/\b(for\s+myself|for\s+me|mine\s+only|personal|just\s+me|no\s+split|my\s+own|only\s+me|myself|yuan|rmb|renminbi|yen|won|baht|rupees?|euros?|pounds?|dollars?)\b/gi,' ');
@@ -349,7 +596,7 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
   item = prettifyMerchantText(item) || item;
   if (!item) item = 'Expense';
 
-  const category = detectCategory(item, overrides, customCats);
+  const category = categoryHint || detectCategory(item, overrides, customCats);
 
   return {
     item, category, date: today(),
@@ -367,6 +614,8 @@ function parseExpense(raw, members, myName, rates, defCur, overrides, customCats
    ══════════════════════════════════════════════════════════════ */
 
 export default function SplitEase() {
+  const isWide = useIsWide();
+
   // ── Auth State ──
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -382,9 +631,10 @@ export default function SplitEase() {
 
   // ── List State ──
   const [lists, setLists] = useState([]);
-  const [currentList, setCurrentList] = useState(null);
+  const [currentList, setCurrentList] = useState(() => readCachedExpenseList());
+  const [listsLoading, setListsLoading] = useState(true);
   const [members, setMembers] = useState([]);
-  const [myName, setMyName] = useState('');
+  const [myName, setMyName] = useState(currentList?.myDisplayName || '');
   const [listScreen, setListScreen] = useState('select');
   const [newListName, setNewListName] = useState('');
   const [newListCur, setNewListCur] = useState('AUD');
@@ -394,26 +644,37 @@ export default function SplitEase() {
 
   // ── App State ──
   const [tab, setTab] = useState('home');
+  const [homeView, setHomeView] = useState('expenses');
+  const [showInvestingPicker, setShowInvestingPicker] = useState(false);
   const [investingView, setInvestingView] = useState('portfolio');
   const [investingPortfolioView, setInvestingPortfolioView] = useState('summary');
   const [investingSecuritiesView, setInvestingSecuritiesView] = useState('pnl');
   const [investingToolsView, setInvestingToolsView] = useState('portfolio');
   const [expenses, setExpenses] = useState([]);
+  const [expenseDetailsLoaded, setExpenseDetailsLoaded] = useState(false);
+  const [expenseDetailsLoading, setExpenseDetailsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [inputText, setInputText] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
+  const [taskInputFocusRequest, setTaskInputFocusRequest] = useState(0);
   const [previewCatOverride, setPreviewCatOverride] = useState(null);
-  const [recurringTemplates, setRecurringTemplates] = useState([]); // array of {text, category}
+  const [recurringTemplates, setRecurringTemplates] = useState([]); // array of recurring expense rules
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
-  const [showTemplates, setShowTemplates] = useState(false);
+  const [expenseTool, setExpenseTool] = useState(null);
+  const [newRecurringText, setNewRecurringText] = useState('');
+  const [newRecurringIntervalCount, setNewRecurringIntervalCount] = useState(1);
+  const [newRecurringIntervalUnit, setNewRecurringIntervalUnit] = useState('months');
+  const [newRecurringNextDueDate, setNewRecurringNextDueDate] = useState(today());
+  const [newRecurringDateMode, setNewRecurringDateMode] = useState('date');
+  const [newRecurringCategory, setNewRecurringCategory] = useState('');
 
   // ── Settings State ──
   const [catOverrides, setCatOverrides] = useState({});
   const [catSuggestions, setCatSuggestions] = useState({});
   const [customCats, setCustomCats] = useState({});
-  const [defCur, setDefCur] = useState('AUD');
+  const [defCur, setDefCur] = useState(currentList?.default_currency || 'AUD');
   const [newCatName, setNewCatName] = useState('');
 
   // ── Stats State ──
@@ -431,6 +692,8 @@ export default function SplitEase() {
   // ── Pending Expenses (from webhook) ──
   const [pendingExpenses, setPendingExpenses] = useState([]);
   const [pendingDrafts, setPendingDrafts] = useState({});
+  const [recurringDrafts, setRecurringDrafts] = useState({});
+  const [otherCategoryDismissedIds, setOtherCategoryDismissedIds] = useState([]);
 
   // ── Settle State ──
   const [showSettle, setShowSettle] = useState(false);
@@ -464,8 +727,13 @@ export default function SplitEase() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [collapsedMonths, setCollapsedMonths] = useState(new Set());
   const inputRef = useRef(null);
-  const fileRef = useRef(null);
-  const csvRef = useRef(null);
+  const lastDeepLinkRef = useRef('');
+  const expenseDetailsAutoLoadRef = useRef(null);
+
+  // ── Nav Layout ──
+  const [navLayout, setNavLayout] = useState(readSavedNavLayout);
+  const [showLayoutEditor, setShowLayoutEditor] = useState(false);
+  const navLongPressRef = useRef(null);
 
   const showToast = useCallback((msg) => {
     setToast({msg, show:true});
@@ -474,21 +742,160 @@ export default function SplitEase() {
 
   const { supported: pushSupported, permission: pushPermission, subscribed: pushSubscribed,
           loading: pushLoading, subscribe: pushSubscribe, unsubscribe: pushUnsubscribe,
-          sendNotification } = usePushNotifications(user, currentList, showToast);
+          sendNotification: rawSendNotification } = usePushNotifications(user, currentList, showToast);
+  const [notificationPrefs, setNotificationPrefs] = useState(DEFAULT_NOTIFICATION_PREFS);
   const [permissions, setPermissions] = useState(new Set());
   const can = (f) => permissions.has(f);
+
+  const navPool = useMemo(() => buildNavPool(can), [permissions]);
+
+  const saveNavLayout = useCallback(async (layout) => {
+    setNavLayout(layout);
+    cacheNavLayout(layout);
+    if (!user) return;
+    const { error } = await sb
+      .from('user_settings')
+      .upsert({ user_id: user.id, key: 'se_nav_layout', value: layout }, { onConflict: 'user_id,key' });
+    if (error) showToast('Could not sync layout');
+  }, [user, showToast]);
+
+  useEffect(() => {
+    if (!user) {
+      setNotificationPrefs(DEFAULT_NOTIFICATION_PREFS);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await sb
+        .from('user_settings')
+        .select('value')
+        .eq('user_id', user.id)
+        .eq('key', 'notification_preferences')
+        .maybeSingle();
+      if (cancelled) return;
+      try {
+        const parsed = typeof data?.value === 'string' ? JSON.parse(data.value) : data?.value;
+        setNotificationPrefs({ ...DEFAULT_NOTIFICATION_PREFS, ...(parsed || {}) });
+      } catch {
+        setNotificationPrefs(DEFAULT_NOTIFICATION_PREFS);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  const updateNotificationPrefs = useCallback(async (nextPrefs) => {
+    const merged = { ...DEFAULT_NOTIFICATION_PREFS, ...nextPrefs };
+    setNotificationPrefs(merged);
+    if (!user) return;
+    await sb
+      .from('user_settings')
+      .upsert({ user_id: user.id, key: 'notification_preferences', value: JSON.stringify(merged) }, { onConflict: 'user_id,key' });
+  }, [user]);
+
+  const sendNotification = useCallback((title, body, tag = 'expense', targetUserId = null) => {
+    if (tag !== 'test' && notificationPrefs[tag] === false) return;
+    return rawSendNotification(title, body, tag, targetUserId);
+  }, [rawSendNotification, notificationPrefs]);
+
+  const effectiveNavConfig = useMemo(() => {
+    const defaultLayout = buildDefaultLayout(can);
+    const layout = normalizeNavLayout(navLayout, defaultLayout, navPool);
+    const poolMap = new Map(navPool.map(item => [item.id, item]));
+
+    const investingBase = navPool.find(item => item.id === 'investing');
+    const investingGroups = (layout.investingGroups || []).map(g => ({
+      label: g.label,
+      items: g.items.filter(id => poolMap.has(id)).map(id => poolMap.get(id)),
+    })).filter(g => g.items.length > 0);
+
+    return (layout.nav || defaultLayout.nav)
+      .filter(id => poolMap.has(id))
+      .map(id => {
+        const item = poolMap.get(id);
+        if (id === 'investing' && investingBase) {
+          return { ...investingBase, nav: true, groups: investingGroups };
+        }
+        return { ...item, nav: true };
+      });
+  }, [navPool, navLayout, permissions]);
+
+  const navigate = useCallback((action) => {
+    if (!action) return;
+    const nextTab = action.tab === 'stats' ? 'home' : action.tab;
+    setTab(nextTab);
+    if (nextTab === 'home') setHomeView(action.homeView || (action.tab === 'stats' ? 'stats' : 'expenses'));
+    if (action.investingView)  setInvestingView(action.investingView);
+    if (action.portfolioView)  setInvestingPortfolioView(action.portfolioView);
+    if (action.securitiesView) setInvestingSecuritiesView(action.securitiesView);
+    setEditingId(null);
+    setShowInvestingPicker(false);
+  }, []);
+
+  const applyDeepLink = useCallback(() => {
+    const params = new URLSearchParams(window.location.search);
+    const targetPage = (params.get('page') || params.get('tab') || '').toLowerCase();
+    if (!targetPage) return;
+    if (['pnl', 'p&l', 'news', 'sec_news'].includes(targetPage) && !can('investing')) return;
+    if (targetPage === 'tasks' && params.get('focusTaskInput') === '1') {
+      setTaskInputFocusRequest(Date.now());
+    }
+
+    const targets = {
+      expense: { tab: 'home', homeView: 'expenses' },
+      expenses: { tab: 'home', homeView: 'expenses' },
+      tasks: { tab: 'tasks' },
+      travel: { tab: 'travel' },
+      pnl: { tab: 'investing', investingView: 'securities', securitiesView: 'pnl' },
+      'p&l': { tab: 'investing', investingView: 'securities', securitiesView: 'pnl' },
+      news: { tab: 'investing', investingView: 'securities', securitiesView: 'news' },
+      sec_news: { tab: 'investing', investingView: 'securities', securitiesView: 'news' },
+    };
+    const action = targets[targetPage];
+    if (!action) return;
+
+    const deepLinkKey = `${window.location.pathname}${window.location.search}`;
+    if (lastDeepLinkRef.current === deepLinkKey) return;
+
+    navigate(action);
+    lastDeepLinkRef.current = deepLinkKey;
+  }, [navigate, permissions]);
+
+  useEffect(() => {
+    applyDeepLink();
+    window.addEventListener('focus', applyDeepLink);
+    window.addEventListener('pageshow', applyDeepLink);
+    window.addEventListener('popstate', applyDeepLink);
+    return () => {
+      window.removeEventListener('focus', applyDeepLink);
+      window.removeEventListener('pageshow', applyDeepLink);
+      window.removeEventListener('popstate', applyDeepLink);
+    };
+  }, [applyDeepLink]);
 
   /* ── Auth Effects ── */
   useEffect(() => {
     if (window.location.hash.includes('type=invite') || window.location.hash.includes('type=recovery')) setSetPasswordMode(true);
-    sb.auth.getSession().then(({data:{session}}) => {
+    let cancelled = false;
+    sb.auth.getSession()
+      .then(({data:{session}}) => {
+        if (cancelled) return;
+        setUser(session?.user || null);
+        setAuthLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUser(null);
+        setAuthLoading(false);
+      });
+    const {data:{subscription}} = sb.auth.onAuthStateChange((_,session) => {
+      if (cancelled) return;
       setUser(session?.user || null);
       setAuthLoading(false);
     });
-    const {data:{subscription}} = sb.auth.onAuthStateChange((_,session) => {
-      setUser(session?.user || null);
-    });
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -503,22 +910,90 @@ export default function SplitEase() {
       .then(({ data }) => setPermissions(new Set((data || []).map(r => r.feature))));
   }, [user]);
 
-  /* ── Fetch Lists ── */
+  /* ── Fetch Per-User Nav Layout ── */
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     (async () => {
-      const {data} = await sb.from('list_members').select('list_id, display_name, expense_lists(id, name, default_currency, invite_code)').eq('user_id', user.id);
-      if (data && data.length > 0) {
-        const ls = data.map(d => ({...d.expense_lists, myDisplayName: d.display_name}));
-        setLists(ls);
-        const saved = localStorage.getItem('splitease_list');
-        const found = ls.find(l => l.id === saved);
-        if (found) { selectList(found); }
-      } else {
-        setLists([]);
-        setCurrentList(null);
+      const localLayout = readSavedNavLayout();
+      const { data, error } = await sb
+        .from('user_settings')
+        .select('value')
+        .eq('user_id', user.id)
+        .eq('key', 'se_nav_layout')
+        .maybeSingle();
+
+      if (cancelled) return;
+      const remoteLayout = data?.value && typeof data.value === 'object' && !Array.isArray(data.value)
+        ? data.value
+        : null;
+
+      if (remoteLayout) {
+        setNavLayout(remoteLayout);
+        cacheNavLayout(remoteLayout);
+        return;
+      }
+
+      if (!error && localLayout) {
+        await sb
+          .from('user_settings')
+          .upsert({ user_id: user.id, key: 'se_nav_layout', value: localLayout }, { onConflict: 'user_id,key' });
       }
     })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  /* ── Fetch Lists ── */
+  useEffect(() => {
+    if (!user) {
+      setListsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setListsLoading(true);
+    (async () => {
+      try {
+        const {data} = await withTimeout(
+          sb.from('list_members').select('list_id, display_name, expense_lists(id, name, default_currency, invite_code)').eq('user_id', user.id),
+          8000,
+          'Opening expense list'
+        );
+        if (cancelled) return;
+        const ls = (data || []).map(d => ({...d.expense_lists, myDisplayName: d.display_name})).filter(l => l?.id);
+        if (ls.length > 0) {
+          setLists(ls);
+          const saved = localStorage.getItem(EXPENSE_LIST_CACHE_KEY);
+          const found = ls.find(l => l.id === saved);
+          const shouldAutoSelect = found || (!saved && ls.length === 1 ? ls[0] : null);
+          if (shouldAutoSelect) {
+            selectList(shouldAutoSelect).catch(() => {
+              if (!cancelled) showToast('Opened list, but some details are still loading');
+            });
+          } else {
+            clearCachedExpenseList();
+            setCurrentList(null);
+          }
+        } else {
+          setLists([]);
+          setCurrentList(null);
+          clearCachedExpenseList();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const cachedList = readCachedExpenseList();
+          setLists(cachedList ? [cachedList] : []);
+          setCurrentList(cachedList);
+          if (cachedList) {
+            setDefCur(cachedList.default_currency || 'AUD');
+            setMyName(cachedList.myDisplayName || '');
+          }
+          showToast(error?.message || 'Could not open expense list');
+        }
+      } finally {
+        if (!cancelled) setListsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [user]);
 
   /* ── Fetch Exchange Rates ── */
@@ -573,31 +1048,92 @@ export default function SplitEase() {
     return () => { sb.removeChannel(channel); };
   }, [currentList, user]);
 
+  const loadExpenseDetails = useCallback(async (listArg = currentList) => {
+    if (!listArg) return [];
+    setExpenseDetailsLoading(true);
+    const { data: exps } = await sb
+      .from('expenses')
+      .select('*')
+      .eq('list_id', listArg.id)
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false });
+    setExpenses(exps || []);
+    setExpenseDetailsLoaded(true);
+    setExpenseDetailsLoading(false);
+    return exps || [];
+  }, [currentList]);
+
+  useEffect(() => {
+    if (!currentList || listsLoading || expenseDetailsLoaded || expenseDetailsLoading) return undefined;
+    if (tab !== 'home' || homeView !== 'expenses') return undefined;
+
+    const run = () => loadExpenseDetails(currentList);
+    const schedule = () => {
+      if ('requestIdleCallback' in window) {
+        expenseDetailsAutoLoadRef.current = window.requestIdleCallback(run, { timeout: 6000 });
+        return () => window.cancelIdleCallback(expenseDetailsAutoLoadRef.current);
+      }
+      expenseDetailsAutoLoadRef.current = window.setTimeout(run, 3000);
+      return () => window.clearTimeout(expenseDetailsAutoLoadRef.current);
+    };
+
+    const cancel = schedule();
+    return () => {
+      cancel?.();
+      expenseDetailsAutoLoadRef.current = null;
+    };
+  }, [currentList, listsLoading, tab, homeView, expenseDetailsLoaded, expenseDetailsLoading, loadExpenseDetails]);
+
   /* ── Select a List ── */
   const selectList = useCallback(async (list) => {
     setCurrentList(list);
     setDefCur(list.default_currency || 'AUD');
     setMyName(list.myDisplayName || '');
-    localStorage.setItem('splitease_list', list.id);
+    setExpenses([]);
+    setExpenseDetailsLoaded(false);
+    setExpenseDetailsLoading(false);
+    setHomeView('expenses');
+    setSearch('');
+    setExpenseTool(null);
+    cacheExpenseList(list);
     fetchRates(list.default_currency || 'AUD');
-    const {data: mems} = await sb.from('list_members').select('*').eq('list_id', list.id);
-    setMembers(mems || []);
-    const {data: exps} = await sb.from('expenses').select('*').eq('list_id', list.id).order('date',{ascending:false}).order('created_at',{ascending:false});
-    setExpenses(exps || []);
-    const {data: sets} = await sb.from('list_settings').select('*').eq('list_id', list.id);
+    const [
+      membersResult,
+      settingsResult,
+      webhookResult,
+      pendingResult,
+    ] = await Promise.allSettled([
+      sb.from('list_members').select('*').eq('list_id', list.id),
+      sb.from('list_settings').select('*').eq('list_id', list.id),
+      user
+        ? sb.from('webhook_tokens').select('secret').eq('list_id', list.id).eq('user_id', user.id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      sb.from('pending_expenses').select('*').eq('list_id', list.id).order('created_at',{ascending:false}),
+    ]);
+    const mems = membersResult.status === 'fulfilled' ? membersResult.value?.data : null;
+    const sets = settingsResult.status === 'fulfilled' ? settingsResult.value?.data : null;
+    const wt = webhookResult.status === 'fulfilled' ? webhookResult.value?.data : null;
+    const pend = pendingResult.status === 'fulfilled' ? pendingResult.value?.data : null;
     const ov = sets?.find(s=>s.key==='categoryOverrides');
     const sg = sets?.find(s=>s.key==='categorySuggestions');
     const cc = sets?.find(s=>s.key==='customCats');
     const rt = sets?.find(s=>s.key==='recurringTemplates');
+    const od = sets?.find(s=>s.key==='otherCategoryDismissedIds');
+    setMembers(mems || []);
     setCatOverrides(ov?.value || {});
     setCatSuggestions(sg?.value || {});
     setCustomCats(cc?.value || {});
-    setRecurringTemplates(rt?.value || []);
-    const {data: wt} = await sb.from('webhook_tokens').select('secret').eq('list_id', list.id).eq('user_id', (await sb.auth.getUser()).data.user?.id).maybeSingle();
+    setRecurringTemplates((rt?.value || []).map(normalizeRecurringTemplate).filter(Boolean));
+    setOtherCategoryDismissedIds(Array.isArray(od?.value) ? od.value : []);
     setWebhookToken(wt?.secret || null);
-    const {data: pend} = await sb.from('pending_expenses').select('*').eq('list_id', list.id).order('created_at',{ascending:false});
     setPendingExpenses(pend || []);
-  }, [fetchRates]);
+  }, [fetchRates, user]);
+
+  useEffect(() => {
+    if (currentList && (homeView === 'stats' || tab === 'stats') && !expenseDetailsLoaded && !expenseDetailsLoading) {
+      loadExpenseDetails(currentList);
+    }
+  }, [currentList, homeView, tab, expenseDetailsLoaded, expenseDetailsLoading, loadExpenseDetails]);
 
   /* ── Save Setting ── */
   const saveSetting = useCallback(async (key, value) => {
@@ -610,15 +1146,20 @@ export default function SplitEase() {
     setAuthError(''); setAuthBusy(true);
     try {
       if (authMode === 'login') {
-        const {error} = await sb.auth.signInWithPassword({email:authEmail, password:authPass});
+        const {data, error} = await sb.auth.signInWithPassword({email:authEmail, password:authPass});
         if (error) throw error;
+        setSession(data?.session || null);
+        setUser(data?.user || data?.session?.user || null);
       } else {
         const {error} = await sb.auth.signUp({email:authEmail, password:authPass});
         if (error) throw error;
         showToast('Check your email to confirm your account!');
       }
-    } catch(e) { setAuthError(e.message); }
-    setAuthBusy(false);
+    } catch(e) {
+      setAuthError(e.message || 'Login failed. Please try again.');
+    } finally {
+      setAuthBusy(false);
+    }
   };
 
   const handleSetPassword = async () => {
@@ -678,7 +1219,7 @@ export default function SplitEase() {
     if (listError) { showToast('Error deleting list: ' + listError.message); return; }
     setLists(prev => prev.filter(l => l.id !== currentList.id));
     setCurrentList(null);
-    localStorage.removeItem('splitease_list');
+    clearCachedExpenseList();
     setTab('home');
     setConfirmDeleteList(false);
     showToast('List deleted');
@@ -707,6 +1248,51 @@ export default function SplitEase() {
     return parseExpense(inputText, members, myName, rates, defCur, catOverrides, customCats);
   }, [inputText, members, myName, rates, defCur, catOverrides, customCats]);
 
+  const normalizedRecurringTemplates = useMemo(
+    () => recurringTemplates
+      .map(normalizeRecurringTemplate)
+      .filter(Boolean)
+      .sort((a, b) => (
+        String(a.nextDueDate || '').localeCompare(String(b.nextDueDate || '')) ||
+        String(a.text || '').localeCompare(String(b.text || ''))
+      )),
+    [recurringTemplates]
+  );
+
+  const dueRecurringTemplates = useMemo(
+    () => normalizedRecurringTemplates.filter(t => t.nextDueDate && t.nextDueDate <= today()),
+    [normalizedRecurringTemplates]
+  );
+
+  const recurringStatRows = useMemo(() => {
+    const infoCategories = new Set(['Income', 'Investment', 'Other']);
+    return normalizedRecurringTemplates
+      .map(rule => {
+        const parsed = parseExpense(rule.text, members, myName, rates, defCur, catOverrides, customCats);
+        if (!parsed) return null;
+        const category = rule.category || parsed.category || 'Other';
+        if (!infoCategories.has(category)) return null;
+        return {
+          id: rule.id,
+          text: rule.text,
+          item: parsed.item || rule.text,
+          category,
+          date: rule.nextDueDate || today(),
+          total_amount: parsed.total_amount || 0,
+          shares: parsed.shares || {},
+          intervalCount: rule.intervalCount,
+          intervalUnit: rule.intervalUnit,
+          dateMode: rule.dateMode,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (
+        String(a.date || '').localeCompare(String(b.date || '')) ||
+        String(a.category || '').localeCompare(String(b.category || '')) ||
+        String(a.item || '').localeCompare(String(b.item || ''))
+      ));
+  }, [normalizedRecurringTemplates, members, myName, rates, defCur, catOverrides, customCats]);
+
   const addSettlement = async () => {
     if (!settleFrom || !settleTo || !settleAmt || !currentList) return;
     const amount = parseFloat(settleAmt);
@@ -719,6 +1305,8 @@ export default function SplitEase() {
     const {data, error} = await sb.from('expenses').insert(row).select().single();
     if (error) { showToast('Error: ' + error.message); return; }
     setExpenses(prev => [data, ...prev]);
+    setExpenseDetailsLoaded(true);
+    loadExpenseDetails(currentList);
     setShowSettle(false); setSettleAmt('');
     showToast(`Recorded: ${settleFrom} paid ${settleTo} ${fmt(amount, defCur)}`);
     sendNotification(`💸 ${settleFrom} paid ${settleTo}`, `${fmt(amount, defCur)} in ${currentList.name}`, 'settlement');
@@ -768,6 +1356,8 @@ export default function SplitEase() {
     const {data, error} = await sb.from('expenses').insert(row).select().single();
     if (error) { showToast('Error: ' + error.message); return; }
     setExpenses(prev => [data, ...prev]);
+    setExpenseDetailsLoaded(true);
+    loadExpenseDetails(currentList);
     setShowAddForm(false);
     setAddItem(''); setAddAmount(''); setAddCategory('Other'); setAddSplitType('equal');
     setAddExactAmounts({}); setAddProportions({}); setAddPercentages({});
@@ -786,6 +1376,8 @@ export default function SplitEase() {
     const {data, error} = await sb.from('expenses').insert(row).select().single();
     if (error) { showToast('Error: ' + error.message); return; }
     setExpenses(prev => [data, ...prev]);
+    setExpenseDetailsLoaded(true);
+    loadExpenseDetails(currentList);
     const finalCat = row.category;
     const autoCat = parsedPreview.category;
     if (previewCatOverride || finalCat === 'Income') {
@@ -800,32 +1392,132 @@ export default function SplitEase() {
 
   const saveTemplate = () => {
     if (!inputText.trim()) return;
-    const finalCat = previewCatOverride || parsedPreview?.category || 'Restaurant';
-    const entry = { text: inputText.trim(), category: finalCat };
-    // dedupe by text
-    const next = [...recurringTemplates.filter(t => (t.text||t) !== entry.text), entry];
+    const recurringHint = extractRecurringExpenseScheduleHint(inputText.trim());
+    const templateText = recurringHint.text || inputText.trim();
+    const finalCat = previewCatOverride || parsedPreview?.category || 'Other';
+    const existing = normalizedRecurringTemplates.find(t => t.text === templateText);
+    const entry = normalizeRecurringTemplate({
+      ...(existing || {}),
+      text: templateText,
+      category: finalCat,
+      intervalCount: recurringHint.schedule?.intervalCount || existing?.intervalCount || 1,
+      intervalUnit: recurringHint.schedule?.intervalUnit || existing?.intervalUnit || 'months',
+      nextDueDate: recurringHint.schedule?.nextDueDate || existing?.nextDueDate || today(),
+      dateMode: recurringHint.schedule?.dateMode || existing?.dateMode || 'date',
+    });
+    const next = [...normalizedRecurringTemplates.filter(t => t.text !== entry.text), entry];
     setRecurringTemplates(next);
     saveSetting('recurringTemplates', next);
     setShowSaveTemplate(false);
-    showToast('Template saved');
+    showToast('Recurring expense saved');
+  };
+
+  const toggleRecurringTool = () => {
+    if (expenseTool !== 'recurring' && inputText.trim() && !newRecurringText.trim()) {
+      setNewRecurringText(inputText.trim());
+    }
+    setExpenseTool(v => v === 'recurring' ? null : 'recurring');
+  };
+
+  const saveManualRecurringTemplate = () => {
+    const text = newRecurringText.trim();
+    if (!text) { showToast('Enter recurring expense text'); return; }
+    const existing = normalizedRecurringTemplates.find(t => t.text === text);
+    const entry = normalizeRecurringTemplate({
+      ...(existing || {}),
+      text,
+      category: newRecurringCategory || null,
+      intervalCount: newRecurringIntervalCount,
+      intervalUnit: newRecurringIntervalUnit,
+      nextDueDate: newRecurringDateMode === 'month-end' ? endOfMonthFor(newRecurringNextDueDate || today()) : newRecurringNextDueDate || today(),
+      dateMode: newRecurringDateMode,
+    });
+    const next = [...normalizedRecurringTemplates.filter(t => t.text !== entry.text), entry];
+    setRecurringTemplates(next);
+    saveSetting('recurringTemplates', next);
+    setNewRecurringText('');
+    setNewRecurringIntervalCount(1);
+    setNewRecurringIntervalUnit('months');
+    setNewRecurringNextDueDate(today());
+    setNewRecurringDateMode('date');
+    setNewRecurringCategory('');
+    showToast('Recurring expense saved');
   };
 
   const deleteTemplate = (t) => {
-    const tText = t.text || t;
-    const next = recurringTemplates.filter(x => (x.text || x) !== tText);
+    const rule = normalizeRecurringTemplate(t);
+    const next = normalizedRecurringTemplates.filter(x => x.id !== rule?.id);
     setRecurringTemplates(next);
     saveSetting('recurringTemplates', next);
   };
 
-  /* ── Confirm / Dismiss Pending (from webhook) ── */
-  const confirmPending = async (pending, draft) => {
+  const updateRecurringRule = (id, patch) => {
+    const next = normalizedRecurringTemplates.map(rule => (
+      rule.id === id
+        ? normalizeRecurringTemplate({ ...rule, ...patch, intervalCount: patch.intervalCount ?? rule.intervalCount })
+        : rule
+    )).filter(Boolean);
+    setRecurringTemplates(next);
+    saveSetting('recurringTemplates', next);
+  };
+
+  const updateRecurringSchedule = (rule, patch) => {
+    const currentDue = rule.nextDueDate || today();
+    const nextDateMode = patch.dateMode ?? rule.dateMode ?? 'date';
+    updateRecurringRule(rule.id, {
+      ...patch,
+      nextDueDate: nextDateMode === 'month-end'
+        ? endOfMonthFor(currentDue > today() ? today() : currentDue)
+        : currentDue > today() ? today() : currentDue,
+    });
+  };
+
+  const advanceRecurringRule = (rule, actionDate = today()) => {
+    const nextDueDate = advanceRecurringDueDate(rule.nextDueDate || actionDate, rule.intervalCount, rule.intervalUnit, rule.dateMode);
+    updateRecurringRule(rule.id, { nextDueDate, lastActionDate: actionDate });
+  };
+
+  const confirmRecurringExpense = async (rule) => {
+    const draftText = (recurringDrafts[rule.id] || rule.text).trim();
+    const parsed = parseExpense(draftText, members, myName, rates, defCur, catOverrides, customCats);
+    if (!parsed || !currentList) { showToast('Could not read recurring expense'); return; }
+    const row = {
+      ...parsed,
+      list_id: currentList.id,
+      category: rule.category || parsed.category,
+      date: rule.nextDueDate || today(),
+    };
+    const { data, error } = await sb.from('expenses').insert(row).select().single();
+    if (error) { showToast('Error: ' + error.message); return; }
+    setExpenses(prev => [data, ...prev]);
+    setExpenseDetailsLoaded(true);
+    loadExpenseDetails(currentList);
+    setRecurringDrafts(prev => {
+      const next = { ...prev };
+      delete next[rule.id];
+      return next;
+    });
+    advanceRecurringRule(rule, row.date);
+    showToast('Added: ' + data.item);
+    const shareNames = Object.keys(data.shares || {}).filter(n => (data.shares[n] || 0) > 0);
+    const isPersonal = shareNames.length === 1 && shareNames[0] === myName;
+    sendNotification(`New expense in ${currentList.name}`, `${myName} added ${data.item} - ${fmt(data.total_amount, defCur)}`, 'expense', isPersonal ? user.id : null);
+  };
+
+  const dismissRecurringSuggestion = (rule) => {
+    advanceRecurringRule(rule);
+    showToast('Skipped recurring expense');
+  };
+
+  const addPendingLikeExpense = async (pending, draft = {}, options = {}) => {
     if (!currentList) return;
     const names = members.map(m => m.display_name);
-    if (names.length === 0) { showToast('No members in list'); return; }
+    if (names.length === 0) { showToast('No members in list'); return null; }
     const payer = draft.paid_by || pending.paid_by || myName || names[0];
     const category = draft.category || 'Other';
     const splitType = draft.split_type || 'equal';
     const amt = parseFloat(pending.amount);
+    if (!Number.isFinite(amt) || amt <= 0) { showToast('Enter a valid amount'); return null; }
     const isForeign = pending.currency && pending.currency !== defCur;
     const total = isForeign && rates[pending.currency] && rates[defCur]
       ? Math.round(cvt(amt, pending.currency, defCur, rates) * 100) / 100
@@ -842,7 +1534,7 @@ export default function SplitEase() {
       list_id: currentList.id,
       item: pending.item,
       category,
-      date: new Date().toISOString().slice(0, 10),
+      date: pending.date || new Date().toISOString().slice(0, 10),
       total_amount: total,
       paid_by: payer,
       split_type: splitType,
@@ -852,11 +1544,38 @@ export default function SplitEase() {
     };
 
     const { data, error } = await sb.from('expenses').insert(row).select().single();
-    if (error) { showToast('Error: ' + error.message); return; }
-    await sb.from('pending_expenses').delete().eq('id', pending.id);
+    if (error) { showToast('Error: ' + error.message); return null; }
+    if (options.deletePending !== false && pending.id) {
+      await sb.from('pending_expenses').delete().eq('id', pending.id);
+    }
     setExpenses(prev => [data, ...prev]);
-    setPendingExpenses(prev => prev.filter(p => p.id !== pending.id));
+    setExpenseDetailsLoaded(true);
+    loadExpenseDetails(currentList);
+    if (pending.id) setPendingExpenses(prev => prev.filter(p => p.id !== pending.id));
     showToast('Added: ' + data.item);
+    return data;
+  };
+
+  /* ── Confirm / Dismiss Pending (from webhook) ── */
+  const confirmPending = async (pending, draft) => {
+    await addPendingLikeExpense(pending, draft);
+  };
+
+  const addMailCandidateExpense = async (candidate) => {
+    if (!currentList || !user) return null;
+    const pending = {
+      item: candidate.item || candidate.subject || 'Mail expense',
+      amount: candidate.amount,
+      currency: candidate.currency || defCur,
+      date: candidate.date,
+      paid_by: myName,
+    };
+    const draft = {
+      category: candidate.category || (candidate.kind === 'income' ? 'Income' : 'Other'),
+      split_type: candidate.splitType || candidate.split_type || 'personal',
+      paid_by: myName,
+    };
+    return addPendingLikeExpense(pending, draft, { deletePending: false });
   };
 
   const dismissPending = async (id) => {
@@ -1002,6 +1721,14 @@ export default function SplitEase() {
     );
   }, [visibleExpenses, search]);
 
+  const otherCategoryCandidates = useMemo(() => {
+    if (!expenseDetailsLoaded) return [];
+    const dismissed = new Set(otherCategoryDismissedIds);
+    return visibleExpenses
+      .filter(e => e.category === 'Other' && e.split_type !== 'settlement' && !dismissed.has(e.id))
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  }, [expenseDetailsLoaded, visibleExpenses, otherCategoryDismissedIds]);
+
   /* ── Stats Data ── */
   const months = useMemo(() => {
     const ms = new Set(visibleExpenses.map(e => e.date?.slice(0,7)).filter(Boolean));
@@ -1013,6 +1740,103 @@ export default function SplitEase() {
   const monthExpenses = useMemo(() =>
     visibleExpenses.filter(e => e.date?.startsWith(selMonth) && e.split_type !== 'settlement'),
   [visibleExpenses, selMonth]);
+
+  const currentMonthSpendOutlook = useMemo(() => {
+    const memberNames = members.map(m => m.display_name);
+    const month = today().slice(0, 7);
+    const monthStart = `${month}-01`;
+    const [year, monthNumber] = month.split('-').map(Number);
+    const monthEnd = new Date(year, monthNumber, 0).toISOString().slice(0, 10);
+    const todayStr = today();
+    const upcomingStart = monthStart > todayStr ? monthStart : todayStr;
+    const totals = {
+      currentIncome: 0,
+      currentInvestment: 0,
+      currentExpense: 0,
+      upcomingIncome: 0,
+      upcomingInvestment: 0,
+      upcomingExpense: 0,
+    };
+    const byPerson = {};
+    memberNames.forEach(name => {
+      byPerson[name] = {
+        currentIncome: 0,
+        currentInvestment: 0,
+        currentExpense: 0,
+        upcomingIncome: 0,
+        upcomingInvestment: 0,
+        upcomingExpense: 0,
+      };
+    });
+
+    visibleExpenses
+      .filter(e => e.date?.startsWith(month) && e.split_type !== 'settlement')
+      .forEach(e => {
+        const amount = e.total_amount || 0;
+        if (e.category === 'Income') totals.currentIncome += amount;
+        else if (e.category === 'Investment') totals.currentInvestment += amount;
+        else if (e.category === 'Settlement') return;
+        else totals.currentExpense += amount;
+        Object.entries(e.shares || {}).forEach(([name, share]) => {
+          if (!byPerson[name]) return;
+          if (e.category === 'Income') byPerson[name].currentIncome += share || 0;
+          else if (e.category === 'Investment') byPerson[name].currentInvestment += share || 0;
+          else if (e.category === 'Settlement') return;
+          else byPerson[name].currentExpense += share || 0;
+        });
+      });
+
+    recurringStatRows.forEach(row => {
+      if (!row.date) return;
+      let dueDate = row.date;
+      let guard = 0;
+      while (dueDate < upcomingStart && guard < 370) {
+        dueDate = addRecurringDueDate(dueDate, row.intervalCount, row.intervalUnit, row.dateMode);
+        guard += 1;
+      }
+      while (dueDate <= monthEnd && guard < 740) {
+        if (dueDate >= upcomingStart && dueDate.startsWith(month)) {
+          const amount = row.total_amount || 0;
+          if (row.category === 'Income') totals.upcomingIncome += amount;
+          else if (row.category === 'Investment') totals.upcomingInvestment += amount;
+          else if (row.category === 'Other') totals.upcomingExpense += amount;
+          Object.entries(row.shares || {}).forEach(([name, share]) => {
+            if (!byPerson[name]) return;
+            if (row.category === 'Income') byPerson[name].upcomingIncome += share || 0;
+            else if (row.category === 'Investment') byPerson[name].upcomingInvestment += share || 0;
+            else if (row.category === 'Other') byPerson[name].upcomingExpense += share || 0;
+          });
+        }
+        dueDate = addRecurringDueDate(dueDate, row.intervalCount, row.intervalUnit, row.dateMode);
+        guard += 1;
+      }
+    });
+
+    const income = totals.currentIncome + totals.upcomingIncome;
+    const investment = totals.currentInvestment + totals.upcomingInvestment;
+    const expense = totals.currentExpense + totals.upcomingExpense;
+    const personOutlook = {};
+    Object.entries(byPerson).forEach(([name, personTotals]) => {
+      const personIncome = personTotals.currentIncome + personTotals.upcomingIncome;
+      const personInvestment = personTotals.currentInvestment + personTotals.upcomingInvestment;
+      const personExpense = personTotals.currentExpense + personTotals.upcomingExpense;
+      personOutlook[name] = {
+        ...personTotals,
+        income: personIncome,
+        investment: personInvestment,
+        expense: personExpense,
+        spendLeft: personIncome - personInvestment - personExpense,
+      };
+    });
+    return {
+      ...totals,
+      income,
+      investment,
+      expense,
+      spendLeft: income - investment - expense,
+      byPerson: personOutlook,
+    };
+  }, [visibleExpenses, recurringStatRows, members]);
 
   const allCats = useMemo(() => {
     const merged = {...BASE_CATS};
@@ -1055,114 +1879,16 @@ export default function SplitEase() {
     return result;
   }, [catSuggestions, expenses]);
 
-  /* ── Import/Export ── */
-  const exportJSON = () => {
-    const blob = new Blob([JSON.stringify({
-      expenses, members: members.map(m=>({display_name:m.display_name,email:m.email})),
-      catOverrides, catSuggestions, customCats, defaultCurrency: defCur
-    }, null, 2)], {type:'application/json'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `splitease-${currentList?.name || 'backup'}-${today()}.json`; a.click();
-  };
-
-  const exportCSV = () => {
-    const ns = members.map(m => m.display_name);
-    const hdr = ['item','category','date','original_currency','original_amount','total_amount','paid_by','split_type',...ns.map(n=>`share_${n}`)];
-    const rows = expenses.map(e => [
-      `"${(e.item||'').replace(/"/g,'""')}"`, e.category, e.date,
-      e.original_currency||'', e.original_amount||'', e.total_amount,
-      e.paid_by, e.split_type, ...ns.map(n => e.shares?.[n] || 0)
-    ]);
-    const csv = [hdr.join(','), ...rows.map(r=>r.join(','))].join('\n');
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-    a.download = `splitease-${today()}.csv`; a.click();
-  };
-
-  const importJSON = (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const d = JSON.parse(ev.target.result);
-        if (d.expenses && currentList) {
-          await sb.from('expenses').delete().eq('list_id', currentList.id);
-          const rows = d.expenses.map(exp => ({
-            list_id: currentList.id, item: exp.item, category: exp.category,
-            date: exp.date, original_currency: exp.original_currency,
-            original_amount: exp.original_amount, total_amount: exp.total_amount,
-            paid_by: exp.paid_by, split_type: exp.split_type, shares: exp.shares || {}
-          }));
-          const {data} = await sb.from('expenses').insert(rows).select();
-          setExpenses(data || []);
-          if (d.catOverrides) { setCatOverrides(d.catOverrides); saveSetting('categoryOverrides', d.catOverrides); }
-          if (d.catSuggestions) { setCatSuggestions(d.catSuggestions); saveSetting('categorySuggestions', d.catSuggestions); }
-          if (d.customCats) { setCustomCats(d.customCats); saveSetting('customCats', d.customCats); }
-          showToast(`Imported ${rows.length} expenses`);
-        }
-      } catch(err) { showToast('Import error: '+err.message); }
-    };
-    reader.readAsText(file); e.target.value = '';
-  };
-
-  const importCSV = (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const lines = ev.target.result.split('\n').filter(l => l.trim());
-        if (lines.length < 2) throw new Error('Empty CSV');
-        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-        const ns = members.map(m => m.display_name);
-        const rows = [];
-        for (let i = 1; i < lines.length; i++) {
-          const vals = []; let current = '', inQuotes = false;
-          for (const ch of lines[i]) {
-            if (ch === '"') { inQuotes = !inQuotes; }
-            else if (ch === ',' && !inQuotes) { vals.push(current.trim()); current = ''; }
-            else { current += ch; }
-          }
-          vals.push(current.trim());
-          const get = (key) => vals[headers.indexOf(key)] || '';
-          const shares = {};
-          let hasNewShares = false;
-          for (const n of ns) {
-            const idx = headers.indexOf(`share_${n.toLowerCase()}`);
-            if (idx >= 0 && vals[idx]) { shares[n] = parseFloat(vals[idx]) || 0; hasNewShares = true; }
-          }
-          if (!hasNewShares && headers.includes('your_share')) {
-            const ys = parseFloat(get('your_share')) || 0;
-            const ps = parseFloat(get('partner_share')) || 0;
-            if (ns.length >= 1) shares[ns[0]] = ys;
-            if (ns.length >= 2) shares[ns[1]] = ps;
-          }
-          if (Object.keys(shares).length === 0) {
-            const total = parseFloat(get('total_amount')) || 0;
-            ns.forEach(n => { shares[n] = total / Math.max(ns.length, 1); });
-          }
-          rows.push({
-            list_id: currentList.id, item: get('item') || 'Imported',
-            category: get('category') || 'Other', date: get('date') || today(),
-            original_currency: get('original_currency') || null,
-            original_amount: parseFloat(get('original_amount')) || null,
-            total_amount: parseFloat(get('total_amount')) || 0,
-            paid_by: get('paid_by') || ns[0] || 'Unknown',
-            split_type: get('split_type') || 'equal', shares
-          });
-        }
-        if (rows.length > 0) {
-          const {data} = await sb.from('expenses').insert(rows).select();
-          setExpenses(prev => [...(data||[]), ...prev]);
-          showToast(`Imported ${rows.length} expenses from CSV`);
-        }
-      } catch(err) { showToast('CSV import error: ' + err.message); }
-    };
-    reader.readAsText(file); e.target.value = '';
-  };
-
   /* ── Add Custom Category ── */
   const addCustomCat = () => {
     if (!newCatName.trim()) return;
     const n = newCatName.trim();
+    const existing = Object.keys(allCats).find(c => c.toLowerCase() === n.toLowerCase());
+    if (existing) {
+      showToast('Category already exists: ' + existing);
+      setNewCatName('');
+      return;
+    }
     const idx = Object.keys(customCats).length % CUST_COLORS.length;
     const newC = {...customCats, [n]: {emoji:'🏷️', c:CUST_COLORS[idx], bg:'#ecfeff', tx:'#0e7490'}};
     setCustomCats(newC);
@@ -1292,6 +2018,30 @@ export default function SplitEase() {
     showToast(`Dismissed suggestion for ${key}`);
   };
 
+  const saveOtherCategoryDismissedIds = (ids) => {
+    const unique = [...new Set(ids)].slice(-500);
+    setOtherCategoryDismissedIds(unique);
+    saveSetting('otherCategoryDismissedIds', unique);
+  };
+
+  const keepExpenseAsOther = (id) => {
+    saveOtherCategoryDismissedIds([...otherCategoryDismissedIds, id]);
+    showToast('Kept as Other');
+  };
+
+  const updateExpenseCategoryQuick = async (expense, category) => {
+    if (!expense?.id || !category || category === expense.category) return;
+    const { error } = await sb.from('expenses').update({ category }).eq('id', expense.id);
+    if (error) {
+      showToast('Error: ' + error.message);
+      return;
+    }
+    setExpenses(prev => prev.map(e => e.id === expense.id ? { ...e, category } : e));
+    saveOtherCategoryDismissedIds(otherCategoryDismissedIds.filter(id => id !== expense.id));
+    queueCategorySuggestions(expense.item, category, expense.category);
+    showToast(`Changed to ${category}`);
+  };
+
   const deleteCatOverride = (key) => {
     const next = { ...catOverrides };
     delete next[key];
@@ -1337,7 +2087,7 @@ export default function SplitEase() {
     await sb.auth.signOut();
     setUser(null); setCurrentList(null); setLists([]);
     setExpenses([]); setMembers([]); setTab('home');
-    localStorage.removeItem('splitease_list');
+    clearCachedExpenseList();
   };
 
   /* ════════════════════════════════════════════════════════════
@@ -1351,7 +2101,7 @@ export default function SplitEase() {
     <AnimatePresence>
       {toast.show && (
         <motion.div initial={{opacity:0,y:-20}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-20}}
-          style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:99,background:'#222',color:'#f5f5ee',padding:'10px 20px',borderRadius:16,fontSize: 12,letterSpacing:'0.08em',textTransform:'uppercase',fontWeight:700,textAlign:'center',fontFamily:MONO,maxWidth:320,boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+          style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:99,background:'#222',color:'#f5f5ee',padding:'10px 20px',borderRadius:16,fontSize: FS.lg,fontWeight:700,textAlign:'center',fontFamily:MONO,maxWidth:320,boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
           {toast.msg}
         </motion.div>
       )}
@@ -1362,8 +2112,8 @@ export default function SplitEase() {
   const ConfirmModal = confirmDelete !== null && (
     <div style={{position:'fixed',inset:0,zIndex:90,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.5)'}} onClick={()=>setConfirmDelete(null)}>
       <div style={{...s.card,margin:16,maxWidth:360,width:'100%'}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:14,...s.upper,fontWeight:700,marginBottom:8}}>Delete Expense?</div>
-        <div style={{fontSize:12,opacity:0.5,lineHeight:1.6,marginBottom:20}}>This action cannot be undone.</div>
+        <div style={{fontSize: FS.lg,...s.upper,fontWeight:700,marginBottom:8}}>Delete Expense?</div>
+        <div style={{fontSize: FS.lg,opacity:0.5,lineHeight:1.6,marginBottom:20}}>This action cannot be undone.</div>
         <div style={{display:'flex',gap:8}}>
           <button style={s.sm(false)} onClick={()=>setConfirmDelete(null)}>Cancel</button>
           <button style={s.sm(true)} onClick={()=>deleteExpense(confirmDelete)}>Delete</button>
@@ -1388,7 +2138,10 @@ export default function SplitEase() {
       {ToastEl}
       <motion.div initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}}
         style={{...s.card,width:'100%',maxWidth:380,padding:'32px 24px'}}>
-        <div style={{fontSize:32,fontWeight:700,...s.upper,letterSpacing:'-0.02em',textAlign:'center',marginBottom:4}}>💰 SplitEase</div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontSize:32,fontWeight:700,...s.upper,letterSpacing:'-0.02em',textAlign:'center',marginBottom:4}}>
+          <img src="/icons/icon-192.png" alt="SplitEase" style={{width:40,height:40,borderRadius:10}} />
+          SplitEase
+        </div>
         <div style={{...s.label,textAlign:'center',marginBottom:24}}>Set your password</div>
         <div style={{marginBottom:16,position:'relative'}}>
           <div style={s.label}>New Password</div>
@@ -1414,9 +2167,12 @@ export default function SplitEase() {
       {ToastEl}
       <motion.div initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}}
         style={{...s.card,width:'100%',maxWidth:380,padding:'32px 24px'}}>
-        <div style={{fontSize:32,fontWeight:700,...s.upper,letterSpacing:'-0.02em',textAlign:'center',marginBottom:4}}>💰 SplitEase</div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontSize:32,fontWeight:700,...s.upper,letterSpacing:'-0.02em',textAlign:'center',marginBottom:4}}>
+          <img src="/icons/icon-192.png" alt="SplitEase" style={{width:40,height:40,borderRadius:10}} />
+          SplitEase
+        </div>
         <div style={{...s.label,textAlign:'center',marginBottom:24}}>{authMode==='login'?'Welcome back':'Create an account'}</div>
-        {authError && <div style={{background:'#fef2f2',color:'#dc2626',fontSize:12,padding:8,borderRadius:12,marginBottom:12}}>{authError}</div>}
+        {authError && <div style={{background:'#fef2f2',color:'#dc2626',fontSize: FS.lg,padding:8,borderRadius:12,marginBottom:12}}>{authError}</div>}
         <div style={{marginBottom:12}}>
           <div style={s.label}>Email</div>
           <input type="email" placeholder="you@email.com" value={authEmail} onChange={e=>setAuthEmail(e.target.value)}
@@ -1436,7 +2192,7 @@ export default function SplitEase() {
         </button>
         {authMode==='login' && (
           <p style={{textAlign:'center',marginBottom:4}}>
-            <button style={{...s.ghost,opacity:0.4,padding:0,fontSize:12,...s.upper}} onClick={async()=>{
+            <button style={{...s.ghost,opacity:0.4,padding:0,fontSize: FS.lg,...s.upper}} onClick={async()=>{
               if (!authEmail) { setAuthError('Enter your email first'); return; }
               const {error} = await sb.auth.resetPasswordForEmail(authEmail, {redirectTo: window.location.origin});
               if (error) setAuthError(error.message);
@@ -1444,13 +2200,30 @@ export default function SplitEase() {
             }}>Forgot password?</button>
           </p>
         )}
-        <p style={{textAlign:'center',fontSize: 12,...s.upper,opacity:0.35}}>
+        <p style={{textAlign:'center',fontSize: FS.lg,...s.upper,opacity:0.35}}>
           {authMode==='login' ? "Don't have an account? " : 'Already have an account? '}
           <button style={{...s.ghost,opacity:1,fontWeight:700,padding:0}} onClick={()=>{setAuthMode(authMode==='login'?'signup':'login');setAuthError('');}}>
             {authMode==='login' ? 'Sign Up' : 'Log In'}
           </button>
         </p>
       </motion.div>
+    </div>
+  );
+
+  // ── List Bootstrapping ──
+  if (!currentList && listsLoading) return (
+    <div className="se" style={s.centerPage}>
+      <style>{THEME_CSS}</style>
+      {ToastEl}
+      <div style={{...s.card,width:'100%',maxWidth:380,padding:'32px 24px',textAlign:'center'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,fontSize:24,fontWeight:700,...s.upper,letterSpacing:'-0.02em',marginBottom:14}}>
+          <img src="/icons/icon-192.png" alt="SplitEase" style={{width:32,height:32,borderRadius:8}} />
+          SplitEase
+        </div>
+        <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1}}
+          style={{width:28,height:28,border:'3px solid #222',borderTopColor:'transparent',borderRadius:'50%',margin:'0 auto 12px'}}/>
+        <div style={{...s.label}}>Opening your expense list...</div>
+      </div>
     </div>
   );
 
@@ -1463,7 +2236,10 @@ export default function SplitEase() {
         style={{...s.card,width:'100%',maxWidth:380,padding:'32px 24px'}}>
 
         {listScreen === 'select' && (<>
-          <div style={{fontSize:24,fontWeight:700,...s.upper,letterSpacing:'-0.02em',marginBottom:2}}>💰 SplitEase</div>
+          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:24,fontWeight:700,...s.upper,letterSpacing:'-0.02em',marginBottom:2}}>
+            <img src="/icons/icon-192.png" alt="SplitEase" style={{width:32,height:32,borderRadius:8}} />
+            SplitEase
+          </div>
           <div style={{...s.label,marginBottom:20}}>{user.email}</div>
           {lists.length > 0 && (
             <div style={{marginBottom:16}}>
@@ -1474,8 +2250,8 @@ export default function SplitEase() {
                   onMouseEnter={e=>e.currentTarget.style.background='#e8e8df'}
                   onMouseLeave={e=>e.currentTarget.style.background='#F0F0EA'}>
                   <div>
-                    <div style={{fontSize:14,fontWeight:700,...s.upper}}>{l.name}</div>
-                    <div style={{fontSize:10,opacity:0.35,...s.upper,marginTop:2}}>{l.default_currency} • as {l.myDisplayName}</div>
+                    <div style={{fontSize: FS.lg,fontWeight:700,...s.upper}}>{l.name}</div>
+                    <div style={{fontSize: FS.lg,opacity:0.35,...s.upper,marginTop:2}}>{l.default_currency} • as {l.myDisplayName}</div>
                   </div>
                   <ArrowRight size={14} style={{opacity:0.3}}/>
                 </button>
@@ -1517,36 +2293,89 @@ export default function SplitEase() {
 
   // ── Derived ──
   const names = members.map(m => m.display_name);
-  const allCatNames = [...Object.keys(BASE_CATS), ...Object.keys(customCats), ...names];
+  const allCatNames = Array.from(new Set([...Object.keys(BASE_CATS), ...Object.keys(customCats), ...names]));
+  const statsProps = {
+    months,
+    monthExpenses,
+    visibleExpenses,
+    names,
+    selMonth,
+    setSelMonth,
+    personFilter,
+    setPersonFilter,
+    expandedStatCats,
+    setExpandedStatCats,
+    customCats,
+    members,
+    defCur,
+    recurringStatRows,
+  };
+
+  const homeTabs = [
+    { id: 'expenses', icon: HomeIcon, label: 'Expenses' },
+    { id: 'stats', icon: BarChart3, label: 'Stats' },
+  ];
+
+  const HomeViewTabs = () => <SegmentedTabs
+    tabs={homeTabs}
+    value={homeView}
+    onChange={(next) => {
+      setHomeView(next);
+      if (next === 'stats' && !expenseDetailsLoaded) loadExpenseDetails();
+    }}
+  />;
+
+  const HomeStatsView = () => (
+    <div style={{ paddingBottom: isWide ? 40 : 80 }}>
+      <div style={{ padding: '32px 16px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+          <div style={SHELL_HEADING_STYLE}>Statistics</div>
+        </div>
+      </div>
+      <HomeViewTabs />
+      {!expenseDetailsLoaded ? (
+        <div style={{ margin:'12px 16px 0', ...s.card, color:CLAY.textLt, fontSize:FS.lg }}>
+          Loading statistics...
+        </div>
+      ) : (
+        <React.Suspense fallback={<div style={{ padding: '20px 16px', fontFamily: MONO, color: CLAY.textLt, fontSize: FS.lg }}>Loading statistics...</div>}>
+          <StatsTabLazy {...statsProps} embedded />
+        </React.Suspense>
+      )}
+    </div>
+  );
 
   /* ════════════════════════════════════════════════════════════
      HOME TAB
      ════════════════════════════════════════════════════════════ */
 const HomeTab = () => (
-    <div style={{paddingBottom:80}}>
-      <div style={{padding:'16px 16px 0'}}>
-        <div style={SHELL_HEADING_STYLE}>HOME</div>
+    <div style={{paddingBottom: isWide ? 40 : 80, display:'flex', flexDirection:'column'}}>
+      <div style={{padding:'32px 16px 0'}}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div style={SHELL_HEADING_STYLE}>Expense</div>
+        </div>
       </div>
+      <HomeViewTabs />
       {/* Balance Header */}
-      <div style={{background:'#fff',color:'#1a1a1a',borderRadius:20,padding:20,margin:'0 16px 0',boxShadow:'0 1px 6px rgba(0,0,0,0.08)',border:'1.5px solid #f0f0ea'}}>
+      {expenseDetailsLoaded && (
+      <div style={{background:CLAY.surface,color:CLAY.text,borderRadius:20,padding:20,margin:'0 16px 0',boxShadow:CLAY.shadow,order:0}}>
         <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
           <div>
-            <div style={{fontSize:18,fontWeight:700,...s.upper}}>{currentList.name}</div>
-            <div style={{fontSize:10,...s.upper,opacity:0.4,marginTop:4}}>Logged in as {myName}</div>
+            <div style={{fontSize:18,fontWeight:600,letterSpacing:'-0.01em'}}>{currentList.name}</div>
           </div>
-          <span style={{fontSize:10,...s.upper,fontWeight:700,background:'#f3f4f6',color:'#374151',padding:'6px 10px',borderRadius:9999}}>{defCur}</span>
+          <span style={{fontSize: FS.lg,...s.upper,fontWeight:600,background:CLAY.surf2,color:CLAY.textMid,padding:'6px 12px',borderRadius:9999,boxShadow:CLAY.shadowSm}}>{defCur}</span>
         </div>
 
         {txns.length === 0 ? (
-          <div style={{textAlign:'center',fontSize:12,...s.upper,opacity:0.4,padding:'10px 0'}}>All settled up! ✨</div>
+          <div style={{textAlign:'center',fontSize: FS.lg,...s.upper,color:CLAY.textLt,padding:'10px 0'}}>All settled up! ✨</div>
         ) : (
           txns.map((t,i) => (
-            <div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:'#f8f9fa',borderRadius:12,padding:'10px 14px',marginBottom:6,fontSize:12,...s.upper}}>
-              <span style={{color:'#374151'}}>{t.from} owes {t.to}</span>
+            <div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:CLAY.surf2,borderRadius:14,padding:'10px 14px',marginBottom:6,fontSize: FS.lg,...s.upper,boxShadow:CLAY.inset}}>
+              <span style={{color:CLAY.textMid}}>{t.from} owes {t.to}</span>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <span style={{fontWeight:700,...s.tabnum}}>{fmt(t.amount, defCur)}</span>
+                <span style={{fontWeight:600,...s.tabnum,color:CLAY.text}}>{fmt(t.amount, defCur)}</span>
                 <button onClick={()=>{setShowSettle(!showSettle);setSettleFrom(t.from);setSettleTo(t.to);setSettleAmt(t.amount.toString());}}
-                  style={{fontFamily:MONO,fontSize:10,...s.upper,background:'#1a1a1a',border:'none',color:'#fff',padding:'4px 10px',borderRadius:9999,cursor:'pointer'}}>
+                  style={{fontFamily:MONO,fontSize: FS.lg,...s.upper,background:CLAY.peach,border:'none',color:CLAY.peachDk,padding:'5px 12px',borderRadius:9999,cursor:'pointer',fontWeight:600,boxShadow:CLAY.btn}}>
                   💸 Settle
                 </button>
               </div>
@@ -1570,15 +2399,26 @@ const HomeTab = () => (
             });
           });
           return (
-            <div style={{display:'grid',gridTemplateColumns:`repeat(${Math.min(names.length,2)}, 1fr)`,gap:8,marginTop:12}}>
-              {names.map(n => (
-                <div key={n} style={{background:'#f3f4f6',borderRadius:12,padding:'10px 12px'}}>
-                  <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:4}}>{n}</div>
-                  <div style={{fontSize:14,fontWeight:700,...s.tabnum,color:'#1a1a1a'}}>{fmt(spend[n].exp, defCur)}</div>
-                  <div style={{fontSize:10,opacity:0.4,...s.upper,marginTop:2}}>this month</div>
-                  {spend[n].prevExp > 0 && <div style={{fontSize:10,opacity:0.35,...s.tabnum,marginTop:1}}>{fmt(spend[n].prevExp, defCur)} last month</div>}
-                </div>
-              ))}
+            <div style={{display:'grid',gridTemplateColumns:`repeat(${Math.min(names.length,2)}, 1fr)`,gap:10,marginTop:14}}>
+                {names.map((n,ni) => {
+                  const pc = PERSON_COLORS[ni % PERSON_COLORS.length];
+                  const outlook = currentMonthSpendOutlook.byPerson?.[n] || {};
+                  const left = outlook.spendLeft || 0;
+                  const hasIncome = Number(outlook.income || 0) > 0.005;
+                  return (
+                    <div key={n} style={{background: pc + '18', borderRadius:14,padding:'12px 14px',boxShadow:CLAY.inset}}>
+                      <div style={{fontSize: FS.lg,color: pc,marginBottom:4,fontWeight:600}}>{n}</div>
+                      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:8}}>
+                        <div style={{fontSize: FS.lg,fontWeight:600,...s.tabnum,color:CLAY.text}}>{fmt(spend[n].exp, defCur)}</div>
+                        {hasIncome && (
+                          <div style={{fontSize: FS.lg,fontWeight:700,...s.tabnum,color:left >= 0 ? '#059669' : '#dc2626'}}>
+                            {fmt(left, defCur)} left
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           );
         })()}
@@ -1593,7 +2433,7 @@ const HomeTab = () => (
                     style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:16,outline:'none',...s.upper}}>
                     {names.map(n=><option key={n} value={n}>{n}</option>)}
                   </select>
-                  <span style={{fontSize:10,...s.upper,opacity:0.4}}>paid</span>
+                  <span style={{fontSize: FS.lg,...s.upper,opacity:0.4}}>paid</span>
                   <select value={settleTo} onChange={e=>setSettleTo(e.target.value)}
                     style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:16,outline:'none',...s.upper}}>
                     {names.filter(n=>n!==settleFrom).map(n=><option key={n} value={n}>{n}</option>)}
@@ -1604,7 +2444,7 @@ const HomeTab = () => (
                     onKeyDown={e=>{if(e.key==='Enter')addSettlement();}}
                     style={{flex:1,background:'#fff',border:'1px solid #e5e7eb',color:'#1a1a1a',borderRadius:12,padding:'8px 10px',fontFamily:MONO,fontSize:16,outline:'none',...s.tabnum}}/>
                   <button onClick={addSettlement}
-                    style={{fontFamily:MONO,fontSize: 12,...s.upper,fontWeight:700,background:'#1a1a1a',color:'#fff',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
+                    style={{fontFamily:MONO,fontSize: FS.lg,...s.upper,fontWeight:700,background:'#1a1a1a',color:'#fff',border:'none',padding:'8px 14px',borderRadius:12,cursor:'pointer'}}>
                     Record
                   </button>
                 </div>
@@ -1612,7 +2452,7 @@ const HomeTab = () => (
                   <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:8}}>
                     {txns.map((t,i)=>(
                       <button key={i} onClick={()=>{setSettleFrom(t.from);setSettleTo(t.to);setSettleAmt(t.amount.toString());}}
-                        style={{background:'#fff',border:'1px solid #e5e7eb',color:'#374151',borderRadius:9999,padding:'4px 10px',fontSize:10,...s.upper,cursor:'pointer',fontFamily:MONO}}>
+                        style={{background:'#fff',border:'1px solid #e5e7eb',color:'#374151',borderRadius:9999,padding:'4px 10px',fontSize: FS.lg,...s.upper,cursor:'pointer',fontFamily:MONO}}>
                         {t.from} → {t.to}: {fmt(t.amount, defCur)}
                       </button>
                     ))}
@@ -1623,14 +2463,131 @@ const HomeTab = () => (
           )}
         </AnimatePresence>
       </div>
+      )}
+
+      {/* Other Category Alert */}
+      <AnimatePresence>
+        {otherCategoryCandidates.length > 0 && (
+          <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
+            style={{margin:'12px 16px 0', order:2}}>
+            <div style={{background:'#FFF8E8',borderRadius:20,padding:14,boxShadow:CLAY.shadow,border:'1px solid #F3DFA0'}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:FS.lg,...s.upper,fontWeight:700,color:'#92400e'}}>Needs category · {otherCategoryCandidates.length}</div>
+                  <div style={{fontSize:FS.lg,...s.upper,opacity:0.55,marginTop:3}}>These are marked as Other. Pick a better category or keep as Other.</div>
+                </div>
+                <button onClick={()=>saveOtherCategoryDismissedIds([...otherCategoryDismissedIds, ...otherCategoryCandidates.map(e=>e.id)])}
+                  style={{background:'rgba(255,255,255,0.7)',border:'none',borderRadius:9999,padding:'6px 10px',fontFamily:MONO,fontSize:FS.lg,...s.upper,cursor:'pointer',boxShadow:CLAY.btn,color:CLAY.textMid}}>
+                  Dismiss all
+                </button>
+              </div>
+              <div style={{display:'grid',gap:8}}>
+                {otherCategoryCandidates.slice(0,3).map(exp => (
+                  <div key={exp.id} style={{background:'rgba(255,255,255,0.72)',borderRadius:16,padding:10}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:8}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:FS.lg,fontWeight:700,...s.upper,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{exp.item}</div>
+                        <div style={{fontSize:FS.lg,...s.upper,opacity:0.45}}>{exp.date} · {fmt(exp.total_amount, defCur)}</div>
+                      </div>
+                      <button onClick={()=>keepExpenseAsOther(exp.id)}
+                        style={{background:CLAY.surf2,border:'none',borderRadius:9999,padding:'6px 10px',fontFamily:MONO,fontSize:FS.lg,...s.upper,cursor:'pointer',boxShadow:CLAY.btn,color:CLAY.textMid,flexShrink:0}}>
+                        Keep
+                      </button>
+                    </div>
+                    <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                      {allCatNames.filter(c => c !== 'Other' && c !== 'Settlement').slice(0,10).map(c => {
+                        const ci = catInfo(c);
+                        return (
+                          <button key={c} onClick={()=>updateExpenseCategoryQuick(exp,c)}
+                            style={{...s.split(false),display:'inline-flex',alignItems:'center',gap:3,background:ci.bg || CLAY.surf2,color:ci.tx || CLAY.textMid}}>
+                            <span>{ci.emoji}</span>{c}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {otherCategoryCandidates.length > 3 && (
+                <div style={{fontSize:FS.lg,...s.upper,opacity:0.45,marginTop:8,padding:'0 2px'}}>
+                  Showing 3. Fix or keep these to reveal more.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Suggested Recurring Expenses */}
+      <AnimatePresence>
+        {dueRecurringTemplates.length > 0 && (
+          <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
+            style={{margin:'12px 16px 0', order:2}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,padding:'0 4px'}}>
+              <span style={{fontSize: FS.lg,...s.upper,fontWeight:700,opacity:0.6}}>
+                Suggested recurring · {dueRecurringTemplates.length}
+              </span>
+            </div>
+            {dueRecurringTemplates.map(rule => {
+              const draftText = recurringDrafts[rule.id] ?? rule.text;
+              const parsed = parseExpense(draftText, members, myName, rates, defCur, catOverrides, customCats);
+              const category = rule.category || parsed?.category || 'Other';
+              const ci = catInfo(category);
+              return (
+                <motion.div key={rule.id} layout initial={{opacity:0,scale:0.97}} animate={{opacity:1,scale:1}} exit={{opacity:0,scale:0.97}}
+                  style={{background:'#F4FBF7',borderRadius:20,padding:14,marginBottom:10,boxShadow:CLAY.shadow,border:'1.5px dashed #86efac'}}>
+                  <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,marginBottom:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize: FS.lg,fontWeight:700,...s.upper,marginBottom:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{parsed?.item || rule.text}</div>
+                      <div style={{fontSize: FS.lg,...s.upper,opacity:0.45}}>
+                        Due {rule.nextDueDate} · {rule.dateMode === 'month-end' ? 'end of each month' : `every ${rule.intervalCount} ${rule.intervalUnit}`}
+                      </div>
+                    </div>
+                    <div style={{textAlign:'right',flexShrink:0}}>
+                      <div style={{fontSize: FS.lg,fontWeight:700,...s.tabnum}}>{parsed ? fmt(parsed.total_amount, defCur) : ''}</div>
+                      <span style={{...s.tag(ci.bg,ci.tx),marginTop:4}}>{ci.emoji} {category}</span>
+                    </div>
+                  </div>
+                  <div style={{marginBottom:10}}>
+                    <div style={{...s.label,marginBottom:4}}>Expense text</div>
+                    <input
+                      value={draftText}
+                      onChange={e=>setRecurringDrafts(prev=>({...prev,[rule.id]:e.target.value}))}
+                      onKeyDown={e=>{if(e.key==='Enter')confirmRecurringExpense(rule);}}
+                      style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}
+                    />
+                  </div>
+                  {parsed?.shares && (
+                    <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
+                      {Object.entries(parsed.shares).map(([n,a])=>(
+                        <span key={n} style={{fontSize: FS.lg,...s.upper,background:'#fff',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{display:'flex',gap:8}}>
+                    <button onClick={()=>confirmRecurringExpense(rule)}
+                      style={{...s.btnDark,flex:1,padding:'10px',borderRadius:14}}>
+                      <Check size={14} style={{verticalAlign:'middle',marginRight:4}}/>Confirm
+                    </button>
+                    <button onClick={()=>dismissRecurringSuggestion(rule)}
+                      style={{background:CLAY.surf2,border:'none',color:CLAY.textMid,padding:'0 14px',borderRadius:14,cursor:'pointer',boxShadow:CLAY.btn,fontFamily:MONO,fontSize:FS.lg}}>
+                      Skip
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Pending Expenses (from webhook) */}
       <AnimatePresence>
         {pendingExpenses.length > 0 && (
           <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
-            style={{margin:'12px 16px 0'}}>
+            style={{margin:'12px 16px 0', order:3}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,padding:'0 4px'}}>
-              <span style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.6}}>
+              <span style={{fontSize: FS.lg,...s.upper,fontWeight:700,opacity:0.6}}>
                 Awaiting confirmation · {pendingExpenses.length}
               </span>
             </div>
@@ -1644,21 +2601,21 @@ const HomeTab = () => (
               const ageLabel = ageMin < 1 ? 'just now' : ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin/60)}h ago`;
               return (
                 <motion.div key={p.id} layout initial={{opacity:0,scale:0.97}} animate={{opacity:1,scale:1}} exit={{opacity:0,scale:0.97}}
-                  style={{...s.card,marginBottom:10,padding:14,border:'2px dashed #d4b84e',background:'#fffdf3'}}>
+                  style={{background:'#FEF8EE',borderRadius:20,padding:14,marginBottom:10,boxShadow:CLAY.shadow,border:'1.5px dashed #E8C878'}}>
                   <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:10}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:700,...s.upper,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.item}</div>
-                      <div style={{fontSize:10,...s.upper,opacity:0.4}}>{ageLabel} · from bank</div>
+                      <div style={{fontSize: FS.lg,fontWeight:700,...s.upper,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.item}</div>
+                      <div style={{fontSize: FS.lg,...s.upper,opacity:0.4}}>{ageLabel} · from bank</div>
                     </div>
                     <div style={{textAlign:'right',marginLeft:8}}>
                       <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6}}>
-                        <span style={{fontSize:9,...s.upper,fontWeight:700,background:'#f0f0ea',padding:'2px 7px',borderRadius:9999}}>
+                        <span style={{fontSize: FS.lg,...s.upper,fontWeight:700,background:'#f0f0ea',padding:'2px 7px',borderRadius:9999}}>
                           {CURR_FLAG[cur]||''} {cur}
                         </span>
-                        <div style={{fontSize:15,fontWeight:700,...s.tabnum}}>{fmt(parseFloat(p.amount), cur)}</div>
+                        <div style={{fontSize: FS.lg,fontWeight:700,...s.tabnum}}>{fmt(parseFloat(p.amount), cur)}</div>
                       </div>
                       {p.currency && p.currency !== defCur && (
-                        <div style={{fontSize:9,...s.upper,opacity:0.4,marginTop:3}}>→ {fmt(rates[p.currency]&&rates[defCur]?cvt(parseFloat(p.amount),p.currency,defCur,rates):parseFloat(p.amount), defCur)}</div>
+                        <div style={{fontSize: FS.lg,...s.upper,opacity:0.4,marginTop:3}}>→ {fmt(rates[p.currency]&&rates[defCur]?cvt(parseFloat(p.amount),p.currency,defCur,rates):parseFloat(p.amount), defCur)}</div>
                       )}
                     </div>
                   </div>
@@ -1700,11 +2657,11 @@ const HomeTab = () => (
 
                   <div style={{display:'flex',gap:8}}>
                     <button onClick={()=>confirmPending(p,{category,paid_by:payer,split_type:splitType})}
-                      style={{...s.btnDark,flex:1,padding:'10px'}}>
+                      style={{...s.btnDark,flex:1,padding:'10px',borderRadius:14}}>
                       <Check size={14} style={{verticalAlign:'middle',marginRight:4}}/>Confirm
                     </button>
                     <button onClick={()=>dismissPending(p.id)}
-                      style={{...s.btnOutline,width:'auto',padding:'10px 14px',borderColor:'#bbb'}}>
+                      style={{background:CLAY.surf2,border:'none',color:CLAY.textMid,width:44,borderRadius:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:CLAY.btn}}>
                       <Trash2 size={14}/>
                     </button>
                   </div>
@@ -1719,9 +2676,9 @@ const HomeTab = () => (
       <AnimatePresence>
         {showAddForm && (
           <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} exit={{opacity:0,y:20}}
-            style={{...s.card,margin:'12px 16px 0',border:'2px solid #222',padding:16}}>
+            style={{...s.card,margin:'12px 16px 0',border:'2px solid #222',padding:16,order:4}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
-              <span style={{fontSize:12,...s.upper,fontWeight:700}}>Add Expense</span>
+              <span style={{fontSize: FS.lg,...s.upper,fontWeight:700}}>Add Expense</span>
               <button onClick={()=>setShowAddForm(false)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3}}><X size={18}/></button>
             </div>
             <div style={{marginBottom:8}}><input placeholder="Item name" value={addItem} onChange={e=>setAddItem(e.target.value)} style={s.input}/></div>
@@ -1739,7 +2696,7 @@ const HomeTab = () => (
             </div>
 
             {/* Foreign currency */}
-            <div style={{fontSize:10,...s.upper,opacity:0.35,cursor:'pointer',padding:'4px 0',marginBottom:8}} onClick={()=>setShowForeign(!showForeign)}>
+            <div style={{fontSize: FS.lg,...s.upper,opacity:0.35,cursor:'pointer',padding:'4px 0',marginBottom:8}} onClick={()=>setShowForeign(!showForeign)}>
               {showForeign?'▾':'▸'} Foreign currency?
             </div>
             {showForeign && (
@@ -1765,19 +2722,19 @@ const HomeTab = () => (
             {/* Ratio inputs */}
             {addSplitType === 'ratio' && (
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>Enter ratio for each person (0 = excluded)</div>
+                <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:6}}>Enter ratio for each person (0 = excluded)</div>
                 {names.map(n => (
                   <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                    <span style={{fontSize:12,width:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',...s.upper}}>{n}</span>
+                    <span style={{fontSize: FS.lg,width:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',...s.upper}}>{n}</span>
                     <input type="number" min="0" placeholder="0" value={addProportions[n]||''} onChange={e=>setAddProportions(p=>({...p,[n]:e.target.value}))} style={{...s.input,flex:1}}/>
-                    <span style={{fontSize:10,opacity:0.35,...s.upper}}>parts</span>
+                    <span style={{fontSize: FS.lg,opacity:0.35,...s.upper}}>parts</span>
                   </div>
                 ))}
                 {addAmount > 0 && (() => {
                   const total = Object.values(addProportions).reduce((ss,v) => ss + (parseFloat(v)||0), 0);
                   if (total === 0) return null;
                   return (
-                    <div style={{background:'#F0F0EA',borderRadius:12,padding:8,fontSize:10,...s.upper}}>
+                    <div style={{background:'#F0F0EA',borderRadius:12,padding:8,fontSize: FS.lg,...s.upper}}>
                       <div style={{fontWeight:700,marginBottom:4}}>Preview:</div>
                       {names.filter(n => parseFloat(addProportions[n]) > 0).map(n => (
                         <div key={n} style={{display:'flex',justifyContent:'space-between',opacity:0.6}}>
@@ -1794,19 +2751,19 @@ const HomeTab = () => (
             {/* Percent inputs */}
             {addSplitType === 'percent' && (
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>Enter percentage (must total 100%)</div>
+                <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:6}}>Enter percentage (must total 100%)</div>
                 {names.map(n => (
                   <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                    <span style={{fontSize:12,width:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',...s.upper}}>{n}</span>
+                    <span style={{fontSize: FS.lg,width:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',...s.upper}}>{n}</span>
                     <input type="number" min="0" max="100" placeholder="0" value={addPercentages[n]||''} onChange={e=>setAddPercentages(p=>({...p,[n]:e.target.value}))} style={{...s.input,flex:1}}/>
-                    <span style={{fontSize:10,opacity:0.35}}>%</span>
+                    <span style={{fontSize: FS.lg,opacity:0.35}}>%</span>
                   </div>
                 ))}
                 {(() => {
                   const total = Object.values(addPercentages).reduce((ss,v) => ss + (parseFloat(v)||0), 0);
                   const isValid = Math.abs(total - 100) < 0.01;
                   return (
-                    <div style={{fontSize:10,padding:8,borderRadius:12,background:isValid?'#f0fdf4':'#fef2f2',color:isValid?'#15803d':'#dc2626'}}>
+                    <div style={{fontSize: FS.lg,padding:8,borderRadius:12,background:isValid?'#f0fdf4':'#fef2f2',color:isValid?'#15803d':'#dc2626'}}>
                       Total: {total.toFixed(1)}% {isValid?'✓':`(${total < 100 ? 'need '+(100-total).toFixed(1)+'% more' : (total-100).toFixed(1)+'% over'})`}
                     </div>
                   );
@@ -1817,10 +2774,10 @@ const HomeTab = () => (
             {/* Exact inputs */}
             {addSplitType === 'exact' && (
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>Enter exact amount (must total {addAmount || '0'})</div>
+                <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:6}}>Enter exact amount (must total {addAmount || '0'})</div>
                 {names.map(n => (
                   <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                    <span style={{fontSize:12,width:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',...s.upper}}>{n}</span>
+                    <span style={{fontSize: FS.lg,width:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',...s.upper}}>{n}</span>
                     <input type="number" min="0" placeholder="0" value={addExactAmounts[n]||''} onChange={e=>setAddExactAmounts(p=>({...p,[n]:e.target.value}))} style={{...s.input,flex:1}}/>
                   </div>
                 ))}
@@ -1828,7 +2785,7 @@ const HomeTab = () => (
                   const sum = Object.values(addExactAmounts).reduce((ss,v) => ss + (parseFloat(v)||0), 0);
                   const target = parseFloat(addAmount) || 0;
                   const diff = target - sum;
-                  return <div style={{fontSize:10,padding:8,borderRadius:12,background:Math.abs(diff)<0.01?'#f0fdf4':'#fef2f2',color:Math.abs(diff)<0.01?'#15803d':'#dc2626'}}>
+                  return <div style={{fontSize: FS.lg,padding:8,borderRadius:12,background:Math.abs(diff)<0.01?'#f0fdf4':'#fef2f2',color:Math.abs(diff)<0.01?'#15803d':'#dc2626'}}>
                     Total: {fmt(sum, defCur)} {Math.abs(diff)<0.01?'✓':`(${diff > 0 ? fmt(diff,defCur)+' remaining' : fmt(-diff,defCur)+' over'})`}
                   </div>;
                 })()}
@@ -1836,7 +2793,7 @@ const HomeTab = () => (
             )}
 
             {addSplitType === 'payer' && (
-              <div style={{fontSize:10,opacity:0.4,...s.upper,background:'#F0F0EA',borderRadius:12,padding:8,marginBottom:12}}>
+              <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,background:'#F0F0EA',borderRadius:12,padding:8,marginBottom:12}}>
                 Entire amount assigned to the payer — no split.
               </div>
             )}
@@ -1844,16 +2801,16 @@ const HomeTab = () => (
             {/* Headcount inputs */}
             {addSplitType === 'headcount' && (
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>Total people (incl. those not in this list)</div>
+                <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:6}}>Total people (incl. those not in this list)</div>
                 <input type="number" min="2" placeholder="e.g. 10" value={addHeadcount}
                   onChange={e=>setAddHeadcount(e.target.value)} style={{...s.input,marginBottom:10}}/>
-                <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:6}}>In-app members to split with</div>
+                <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:6}}>In-app members to split with</div>
                 {names.map(n => (
                   <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
                     <input type="checkbox" checked={addHeadcountMembers[n] !== false}
                       onChange={e=>setAddHeadcountMembers(p=>({...p,[n]:e.target.checked}))}
                       style={{width:14,height:14,cursor:'pointer'}}/>
-                    <span style={{fontSize:12,...s.upper}}>{n}</span>
+                    <span style={{fontSize: FS.lg,...s.upper}}>{n}</span>
                   </div>
                 ))}
                 {addAmount > 0 && parseInt(addHeadcount) >= 2 && (() => {
@@ -1863,7 +2820,7 @@ const HomeTab = () => (
                   const selected = names.filter(n => addHeadcountMembers[n] !== false);
                   const tracked = perPerson * selected.length;
                   return (
-                    <div style={{background:'#F0F0EA',borderRadius:12,padding:8,fontSize:10,...s.upper,marginTop:6}}>
+                    <div style={{background:'#F0F0EA',borderRadius:12,padding:8,fontSize: FS.lg,...s.upper,marginTop:6}}>
                       <div style={{display:'flex',justifyContent:'space-between',fontWeight:700,marginBottom:6}}>
                         <span>{fmt(bill,defCur)} ÷ {hc} people</span>
                         <span>{fmt(perPerson,defCur)}/person</span>
@@ -1891,52 +2848,32 @@ const HomeTab = () => (
         )}
       </AnimatePresence>
 
-      {/* Recurring Templates */}
-      {recurringTemplates.length > 0 && (
-        <div style={{margin:'8px 16px 0',background:'#fff',borderRadius:12,border:'1px solid #f0f0ea',overflow:'hidden'}}>
-          <button onClick={()=>setShowTemplates(v=>!v)}
-            style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',background:'none',border:'none',cursor:'pointer',fontFamily:MONO}}>
-            <span style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.4}}>Recurring ({recurringTemplates.length})</span>
-            <span style={{fontSize:10,opacity:0.25}}>{showTemplates ? '▾' : '▸'}</span>
-          </button>
-          {showTemplates && (
-            <div style={{borderTop:'1px solid #f0f0ea',padding:'8px 10px',display:'flex',flexDirection:'column',gap:4}}>
-              {recurringTemplates.map(t => {
-                const tText = t.text || t;
-                const tCat = t.category || null;
-                const ci = tCat ? catInfo(tCat) : null;
-                return (
-                  <div key={tText} style={{display:'flex',alignItems:'center',gap:6,background:'#fafaf5',borderRadius:10,padding:'6px 10px'}}>
-                    <button onClick={()=>{setInputText(tText);setPreviewCatOverride(tCat);setInputFocused(true);inputRef.current?.focus();setShowTemplates(false);}}
-                      style={{flex:1,background:'none',border:'none',cursor:'pointer',textAlign:'left',fontFamily:MONO,fontSize:12,color:'#1a1a1a',padding:0}}>
-                      {ci && <span style={{...s.tag(ci.bg,ci.tx),marginRight:6}}>{ci.emoji} {tCat}</span>}
-                      {tText}
-                    </button>
-                    <button onClick={()=>deleteTemplate(t)}
-                      style={{background:'none',border:'none',cursor:'pointer',padding:'2px 4px',color:'#9ca3af',display:'flex',alignItems:'center',flexShrink:0}}>
-                      <X size={11}/>
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Quick Input */}
-      <div style={{...s.card,margin:'12px 16px 0',padding:0,overflow:'hidden'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,padding:'14px 16px'}}>
-          <button onClick={()=>{setShowAddForm(!showAddForm);setAddPaidBy(myName);}}
-            style={{background:'none',border:'none',cursor:'pointer',opacity:showAddForm?1:0.3,transition:'all 0.2s',transform:showAddForm?'rotate(45deg)':'none'}}>
-            <Plus size={18}/>
-          </button>
-          <input ref={inputRef} placeholder="Add expense… e.g. 'dinner ¥500 Sam paid'" value={inputText}
+      <div style={{background:CLAY.surface,borderRadius:20,margin:'12px 16px 0',padding:0,overflow:'hidden',boxShadow:CLAY.shadow,order:1}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'14px 16px'}}>
+          <input ref={inputRef} placeholder="Describe an expense…" value={inputText}
             onChange={e=>{setInputText(e.target.value);setPreviewCatOverride(null);}} onFocus={()=>setInputFocused(true)}
             onKeyDown={e=>{if(e.key==='Enter'&&parsedPreview)addExpense();}}
-            style={{flex:1,fontSize:16,outline:'none',background:'transparent',border:'none',fontFamily:MONO,color:'#1a1a1a',letterSpacing:'0.04em'}}/>
-          {inputText && <button onClick={()=>{setInputText('');setInputFocused(false);setPreviewCatOverride(null);}} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3}}><X size={16}/></button>}
-          {parsedPreview && <button onClick={addExpense} style={{background:'#222',color:'#f5f5ee',border:'none',width:32,height:32,borderRadius:12,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><Send size={14}/></button>}
+            style={{flex:1,fontSize:16,outline:'none',background:'transparent',border:'none',fontFamily:MONO,color:CLAY.text,letterSpacing:'0.02em'}}/>
+          {inputText && <button onClick={()=>{setInputText('');setInputFocused(false);setPreviewCatOverride(null);}} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3,color:CLAY.text}}><X size={16}/></button>}
+          {parsedPreview && <button onClick={addExpense} style={{background:CLAY.text,color:CLAY.surface,border:'none',width:34,height:34,borderRadius:'50%',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'4px 4px 12px rgba(44,36,32,0.32)',flexShrink:0}}><Send size={14}/></button>}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,padding:'0 12px 12px'}}>
+          {[
+            {id:'manual',label:'Manual',icon:Plus,onClick:()=>{setShowAddForm(true);setAddPaidBy(myName);setExpenseTool(null);}},
+            {id:'recurring',label:'Recurring',icon:RefreshCw,onClick:toggleRecurringTool},
+            {id:'search',label:'Search',icon:Search,onClick:()=>{ if (!expenseDetailsLoaded) loadExpenseDetails(); setExpenseTool(v=>v==='search'?null:'search'); }},
+          ].map(tool => {
+            const active = expenseTool === tool.id || (tool.id === 'manual' && showAddForm);
+            const Icon = tool.icon;
+            return (
+              <button key={tool.id} onClick={tool.onClick}
+                style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'8px 6px',border:'none',borderRadius:12,cursor:'pointer',fontFamily:MONO,fontSize:FS.lg,fontWeight:600,background:active?CLAY.text:CLAY.surf2,color:active?CLAY.surface:CLAY.textMid,boxShadow:active?'3px 3px 9px rgba(44,36,32,0.24)':CLAY.btn}}>
+                <Icon size={13}/>
+                <span>{tool.label}</span>
+              </button>
+            );
+          })}
         </div>
         <AnimatePresence>
           {inputFocused && parsedPreview && (
@@ -1945,11 +2882,11 @@ const HomeTab = () => (
                 const effectiveCat = previewCatOverride || parsedPreview.category;
                 const ci = catInfo(effectiveCat);
                 return (
-                  <div style={{borderTop:'1px solid #eee',padding:'12px 16px',fontSize:12}}>
+                  <div style={{borderTop:'1px solid #eee',padding:'12px 16px',fontSize: FS.lg}}>
                     <div style={{display:'flex',flexWrap:'wrap',gap:6,alignItems:'center'}}>
-                      <span style={{fontSize:14,fontWeight:700,...s.upper}}>{parsedPreview.item}</span>
+                      <span style={{fontSize: FS.lg,fontWeight:700,...s.upper}}>{parsedPreview.item}</span>
                       <select value={effectiveCat} onChange={e=>setPreviewCatOverride(e.target.value)}
-                        style={{fontSize:10,fontFamily:MONO,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',
+                        style={{fontSize: FS.lg,fontFamily:MONO,fontWeight:600,
                           background:ci.bg,color:ci.tx,border:'none',borderRadius:9999,padding:'3px 8px',cursor:'pointer',outline:'none'}}>
                         {allCatNames.map(c=>{const ci2=catInfo(c);return <option key={c} value={c}>{ci2.emoji} {c}</option>;})}
                       </select>
@@ -1964,37 +2901,197 @@ const HomeTab = () => (
                     {Object.keys(parsedPreview.shares).length > 0 && (
                       <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6}}>
                         {Object.entries(parsedPreview.shares).map(([n,a])=>(
-                          <span key={n} style={{fontSize:10,...s.upper,background:'#F0F0EA',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
+                          <span key={n} style={{fontSize: FS.lg,...s.upper,background:'#F0F0EA',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
                         ))}
                       </div>
                     )}
-                    <div style={{marginTop:8}}>
-                      {!recurringTemplates.some(t => (t.text||t) === inputText.trim()) ? (
-                        <button onClick={saveTemplate}
-                          style={{fontSize:9,...s.upper,background:'none',border:'none',cursor:'pointer',color:'#9ca3af',padding:0,fontFamily:MONO}}>
-                          ＋ Save as recurring template
-                        </button>
-                      ) : (
-                        <span style={{fontSize:9,...s.upper,color:'#9ca3af',fontFamily:MONO}}>✓ Saved as template</span>
-                      )}
-                    </div>
                   </div>
                 );
               })()}
             </motion.div>
           )}
         </AnimatePresence>
+        <AnimatePresence>
+          {expenseTool && (
+            <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} style={{overflow:'hidden',borderTop:`1px solid ${CLAY.surf2}`}}>
+              {expenseTool === 'search' && (
+                <div style={{padding:'12px 14px',position:'relative'}}>
+                  <Search size={14} style={{position:'absolute',left:28,top:'50%',transform:'translateY(-50%)',color:CLAY.textLt}}/>
+                  <input autoFocus placeholder="Search expenses…" value={search} onChange={e=>setSearch(e.target.value)}
+                    style={{...s.input,paddingLeft:36,borderRadius:14,background:CLAY.surf2,boxShadow:CLAY.inset}}/>
+                  {search && (
+                    <button onClick={()=>setSearch('')}
+                      style={{position:'absolute',right:28,top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',color:CLAY.textLt,display:'flex',alignItems:'center'}}>
+                      <X size={14}/>
+                    </button>
+                  )}
+                </div>
+              )}
+              {expenseTool === 'recurring' && (
+                <div style={{padding:'10px 12px 12px',display:'flex',flexDirection:'column',gap:8}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                    <span style={{fontSize:FS.lg,fontWeight:700,color:CLAY.textMid}}>Recurring expense settings</span>
+                    <span style={{fontSize:FS.lg,opacity:0.35}}>{normalizedRecurringTemplates.length} saved</span>
+                  </div>
+                  <div style={{display:'grid',gap:8,background:'#fff',borderRadius:12,padding:'10px',boxShadow:CLAY.inset}}>
+                    <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.7}}>
+                      New recurring expense
+                      <input
+                        value={newRecurringText}
+                        onChange={e=>setNewRecurringText(e.target.value)}
+                        placeholder="e.g. Rent 550 me"
+                        style={{...s.input,padding:'8px 10px',fontSize:16,background:CLAY.surf2}}
+                      />
+                    </label>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.7}}>
+                        Every
+                        <input
+                          type="number"
+                          min="1"
+                          value={newRecurringIntervalCount}
+                          onChange={e=>setNewRecurringIntervalCount(clampRecurringInterval(e.target.value))}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:CLAY.surf2}}
+                        />
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.7}}>
+                        Unit
+                        <select value={newRecurringIntervalUnit} onChange={e=>setNewRecurringIntervalUnit(e.target.value)}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:CLAY.surf2}}>
+                          <option value="days">Days</option>
+                          <option value="weeks">Weeks</option>
+                          <option value="months">Months</option>
+                        </select>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.7}}>
+                        Next due
+                        <input type="date" value={newRecurringNextDueDate}
+                          onChange={e=>setNewRecurringNextDueDate(e.target.value || today())}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:CLAY.surf2}}/>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.7}}>
+                        Due mode
+                        <select value={newRecurringDateMode} onChange={e=>{
+                          const mode = e.target.value;
+                          setNewRecurringDateMode(mode);
+                          if (mode === 'month-end') {
+                            setNewRecurringIntervalCount(1);
+                            setNewRecurringIntervalUnit('months');
+                            setNewRecurringNextDueDate(endOfMonthFor(newRecurringNextDueDate || today()));
+                          }
+                        }}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:CLAY.surf2}}>
+                          <option value="date">Selected date</option>
+                          <option value="month-end">End of each month</option>
+                        </select>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.7}}>
+                        Category
+                        <select value={newRecurringCategory} onChange={e=>setNewRecurringCategory(e.target.value)}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:CLAY.surf2}}>
+                          <option value="">Auto</option>
+                          {allCatNames.map(c=><option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <button onClick={saveManualRecurringTemplate} style={{...s.btnDark,padding:'10px 12px',borderRadius:14}}>
+                      Save recurring expense
+                    </button>
+                  </div>
+              {normalizedRecurringTemplates.map(t => {
+                return (
+                  <div key={t.id} style={{display:'grid',gap:8,background:CLAY.surf2,borderRadius:12,padding:'10px'}}>
+                    <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.6}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:6}}>
+                        <span>Expense text</span>
+                        <button onClick={()=>deleteTemplate(t)}
+                          style={{background:'none',border:'none',cursor:'pointer',padding:'2px 4px',color:CLAY.textLt,display:'flex',alignItems:'center',flexShrink:0}}>
+                          <X size={12}/>
+                        </button>
+                      </div>
+                      <input
+                        defaultValue={t.text}
+                        onBlur={e=>{
+                          const text = e.target.value.trim();
+                          if (!text) { e.target.value = t.text; return; }
+                          updateRecurringRule(t.id,{text});
+                        }}
+                        onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();}}
+                        style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}
+                      />
+                    </label>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.6}}>
+                        Every
+                        <input type="number" min="1" value={t.intervalCount}
+                          onChange={e=>updateRecurringSchedule(t,{intervalCount:e.target.value})}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}/>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.6}}>
+                        Unit
+                        <select value={t.intervalUnit} onChange={e=>updateRecurringSchedule(t,{intervalUnit:e.target.value})}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}>
+                          <option value="days">Days</option>
+                          <option value="weeks">Weeks</option>
+                          <option value="months">Months</option>
+                        </select>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.6}}>
+                        Next due
+                        <input type="date" value={t.nextDueDate || today()}
+                          onChange={e=>updateRecurringRule(t.id,{nextDueDate:t.dateMode === 'month-end' ? endOfMonthFor(e.target.value || today()) : e.target.value || today()})}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}/>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.6}}>
+                        Due mode
+                        <select value={t.dateMode || 'date'} onChange={e=>updateRecurringSchedule(t,{dateMode:e.target.value,intervalUnit:e.target.value === 'month-end' ? 'months' : t.intervalUnit,intervalCount:e.target.value === 'month-end' ? 1 : t.intervalCount})}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}>
+                          <option value="date">Selected date</option>
+                          <option value="month-end">End of each month</option>
+                        </select>
+                      </label>
+                      <label style={{display:'grid',gap:4,fontSize: FS.lg,...s.upper,opacity:0.6}}>
+                        Category
+                        <select value={t.category || ''} onChange={e=>updateRecurringRule(t.id,{category:e.target.value || null})}
+                          style={{...s.input,padding:'8px 10px',fontSize:16,background:'#fff'}}>
+                          <option value="">Auto</option>
+                          {allCatNames.map(c=><option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <div style={{fontSize: FS.lg,...s.upper,opacity:0.4}}>
+                      {t.nextDueDate <= today() ? 'Ready for confirmation now' : `Will suggest on ${t.nextDueDate}`}
+                    </div>
+                  </div>
+                );
+              })}
+              {normalizedRecurringTemplates.length === 0 && (
+                <div style={{fontSize: FS.lg,...s.upper,opacity:0.35,padding:'4px 2px'}}>
+                  No recurring expenses yet. Add one above and it will suggest itself when due.
+                </div>
+              )}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* Search */}
-      <div style={{margin:'12px 16px 0',position:'relative'}}>
-        <Search size={14} style={{position:'absolute',left:14,top:'50%',transform:'translateY(-50%)',opacity:0.3}}/>
-        <input placeholder="Search expenses…" value={search} onChange={e=>setSearch(e.target.value)}
-          style={{...s.input,paddingLeft:36,borderRadius:12,border:'1px solid #eee',background:'#fff'}}/>
-      </div>
+      {!expenseDetailsLoaded && (
+        <div style={{margin:'12px 16px 0',order:5}}>
+          <button
+            onClick={()=>loadExpenseDetails()}
+            disabled={expenseDetailsLoading}
+            style={{...s.btnOutline,border:'none',background:CLAY.surface,boxShadow:CLAY.shadow,padding:'14px 16px',textTransform:'none',letterSpacing:'0.02em',fontSize:FS.lg,color:CLAY.textMid}}
+          >
+            {expenseDetailsLoading ? 'Loading balances & history...' : 'Load balances & history'}
+          </button>
+        </div>
+      )}
 
       {/* Expense List */}
-      <div style={{padding:'12px 16px'}}>
+      {expenseDetailsLoaded && (
+      <div style={{padding:'12px 16px',order:5}}>
         {(() => {
           const curMonth = new Date().toISOString().slice(0,7);
           // Build month groups
@@ -2018,11 +3115,11 @@ const HomeTab = () => (
             });
             return (
               <div key={m}>
-                <button onClick={toggleMonth} style={{display:'flex',alignItems:'center',justifyContent:'space-between',width:'100%',background:'none',border:'none',cursor:'pointer',padding:'8px 2px 6px',fontFamily:MONO}}>
-                  <span style={{fontSize:10,...s.upper,fontWeight:700,opacity:0.4,letterSpacing:'0.08em'}}>{label}</span>
+                <button onClick={toggleMonth} style={{display:'flex',alignItems:'center',justifyContent:'space-between',width:'100%',background:'none',border:'none',cursor:'pointer',padding:'16px 4px 8px',fontFamily:MONO}}>
+                  <span style={{fontSize: FS.lg,...s.upper,fontWeight:600,color:CLAY.textLt,letterSpacing:'0.1em'}}>{label}</span>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    {isCollapsed && <span style={{fontSize:10,...s.tabnum,opacity:0.3}}>{fmt(monthTotal,defCur)}</span>}
-                    <span style={{fontSize:10,opacity:0.25}}>{isCollapsed ? '▸' : '▾'}</span>
+                    {isCollapsed && <span style={{fontSize: FS.lg,...s.tabnum,fontWeight:600,color:CLAY.textMid}}>{fmt(monthTotal,defCur)}</span>}
+                    <span style={{fontSize: FS.lg,color:CLAY.textLt}}>{isCollapsed ? '▸' : '▾'}</span>
                   </div>
                 </button>
                 <AnimatePresence>
@@ -2032,53 +3129,46 @@ const HomeTab = () => (
             const isEditing = editingId === exp2.id;
             return (
               <motion.div key={exp2.id} layout initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} exit={{opacity:0,x:-100}}
-                style={{...s.card,marginBottom:10,padding:0,overflow:'hidden'}}>
+                style={{background:CLAY.surface,borderRadius:20,marginBottom:10,padding:0,overflow:'hidden',boxShadow:CLAY.shadowSm}}>
                 {!isEditing ? (
                   <div style={{padding:'14px 16px'}}>
-                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8}}>
-                      <div style={{display:'flex',alignItems:'flex-start',gap:10,flex:1,minWidth:0}}>
-                        <span style={{fontSize:20,flexShrink:0,marginTop:1}}>{ci.emoji}</span>
-                        <div style={{minWidth:0}}>
-                          <div style={{fontSize:14,fontWeight:700,...s.upper,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{exp.item}</div>
-                          <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6,alignItems:'center'}}>
-                            <span style={s.tag(ci.bg,ci.tx)}>{exp.category}</span>
-                            <span style={s.tag('#F0F0EA','#1a1a1a')}>{exp.date}</span>
-                            {exp.original_currency && <span style={s.tag('#fef3c7','#92400e')}>{CURR_FLAG[exp.original_currency]||''} {fmt(exp.original_amount, exp.original_currency)}</span>}
-                            {exp.split_type && exp.split_type !== 'settlement' && exp.split_type !== 'headcount' && (
-                              <span style={{...s.tag('#F0F0EA','#1a1a1a'),opacity:0.5}}>
-                                {exp.split_type === 'exact' ? 'custom' : exp.split_type}
-                              </span>
-                            )}
-                            {exp.split_type === 'headcount' && exp.headcount && (
-                              <span style={s.tag('#e0f2fe','#0369a1')}>
-                                {exp.headcount} ppl · {fmt(exp.total_amount / exp.headcount, defCur)}/ea
-                              </span>
-                            )}
-                          </div>
+                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10}}>
+                      <div style={{display:'flex',alignItems:'flex-start',gap:12,flex:1,minWidth:0}}>
+                        <span style={{width:40,height:40,borderRadius:'50%',background:ci.bg||CLAY.surf2,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0,boxShadow:CLAY.btn}}>{ci.emoji}</span>
+                        <div style={{minWidth:0,paddingTop:10}}>
+                          <div style={{fontSize: FS.lg,fontWeight:500,color:CLAY.text,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{toTitleCase(exp.item)}</div>
                         </div>
                       </div>
-                      <div style={{textAlign:'right',flexShrink:0}}>
-                        <div style={{fontSize:14,fontWeight:700,...s.tabnum}}>{fmt(exp.total_amount, defCur)}</div>
-                        <div style={{fontSize:10,...s.upper,opacity:0.35,marginTop:2}}>{exp.paid_by} paid</div>
+                      <div style={{textAlign:'right',flexShrink:0,paddingTop:10}}>
+                        <div style={{fontSize: FS.lg,fontWeight:600,...s.tabnum,color:CLAY.text}}>{fmt(exp.total_amount, defCur)}</div>
                         {exp.split_type === 'headcount' && (
-                          <div style={{fontSize:9,...s.upper,opacity:0.25,marginTop:1}}>
+                          <div style={{fontSize: FS.lg,...s.upper,color:CLAY.textLt,marginTop:1}}>
                             {fmt(Object.values(exp.shares||{}).reduce((a,b)=>a+b,0),defCur)} tracked
                           </div>
                         )}
                       </div>
                     </div>
-                    {exp.shares && Object.keys(exp.shares).length > 0 && exp.split_type !== 'personal' && exp.split_type !== 'settlement' && (
-                      <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:8}}>
-                        {Object.entries(exp.shares).map(([n,a])=>(
-                          <span key={n} style={{fontSize:10,...s.upper,background:'#F0F0EA',padding:'4px 8px',borderRadius:9999,...s.tabnum}}>{n}: {fmt(a,defCur)}</span>
-                        ))}
-                      </div>
-                    )}
-                    <div style={{display:'flex',gap:4,justifyContent:'flex-end',marginTop:8}}>
-                      <button onClick={()=>startEdit(exp)} style={{width:32,height:32,borderRadius:12,border:'none',background:'transparent',cursor:'pointer',opacity:0.2,display:'flex',alignItems:'center',justifyContent:'center',transition:'opacity 0.2s'}}
-                        onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='0.2'}><Pencil size={14}/></button>
-                      <button onClick={()=>setConfirmDelete(exp.id)} style={{width:32,height:32,borderRadius:12,border:'none',background:'transparent',cursor:'pointer',opacity:0.2,display:'flex',alignItems:'center',justifyContent:'center',transition:'opacity 0.2s'}}
-                        onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='0.2'}><Trash2 size={14}/></button>
+                    {/* Pills row + edit/delete inline */}
+                    <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:8,alignItems:'center'}}>
+                      <span style={s.tag(ci.bg,ci.tx)}>{exp.category}</span>
+                      <span style={s.tag(CLAY.surf2,CLAY.textMid)}>{exp.date}</span>
+                      <span style={{...s.tag(CLAY.surf2,CLAY.textMid),...personTagStyle(exp.paid_by,names)}}>{exp.paid_by} paid</span>
+                      {exp.original_currency && <span style={s.tag(CLAY.sand,CLAY.sandDk)}>{CURR_FLAG[exp.original_currency]||''} {fmt(exp.original_amount, exp.original_currency)}</span>}
+                      {exp.split_type && exp.split_type !== 'settlement' && exp.split_type !== 'headcount' && exp.split_type !== 'equal' && (
+                        <span style={s.tag(CLAY.surf2,CLAY.textLt)}>{exp.split_type === 'exact' ? 'custom' : exp.split_type}</span>
+                      )}
+                      {exp.split_type === 'headcount' && exp.headcount && (
+                        <span style={s.tag(CLAY.blue,CLAY.blueDk)}>{exp.headcount} ppl · {fmt(exp.total_amount / exp.headcount, defCur)}/ea</span>
+                      )}
+                      {exp.shares && Object.keys(exp.shares).length > 0 && exp.split_type !== 'personal' && exp.split_type !== 'settlement' && (
+                        Object.entries(exp.shares).map(([n,a])=>(
+                          <span key={n} style={{fontSize: FS.lg,padding:'4px 10px',borderRadius:9999,...s.tabnum,boxShadow:CLAY.btn,...personTagStyle(n,names)}}>{n}: {fmt(a,defCur)}</span>
+                        ))
+                      )}
+                      <button onClick={()=>startEdit(exp)} style={{width:28,height:28,borderRadius:8,border:'none',background:CLAY.surf2,cursor:'pointer',opacity:0.4,display:'flex',alignItems:'center',justifyContent:'center',color:CLAY.textMid,flexShrink:0}}
+                        onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='0.4'}><Pencil size={12}/></button>
+                      <button onClick={()=>setConfirmDelete(exp.id)} style={{width:28,height:28,borderRadius:8,border:'none',background:CLAY.surf2,cursor:'pointer',opacity:0.4,display:'flex',alignItems:'center',justifyContent:'center',color:CLAY.textMid,flexShrink:0}}
+                        onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='0.4'}><Trash2 size={12}/></button>
                     </div>
                   </div>
                 ) : (
@@ -2126,7 +3216,7 @@ const HomeTab = () => (
                     {/* Exchange rate row — only for foreign currency */}
                     {editForm.original_currency && (
                       <div style={{background:'#fef9e7',border:'1px solid #f0e6c0',borderRadius:12,padding:'8px 12px',marginBottom:8,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                        <span style={{fontSize:10,...s.upper,opacity:0.5,whiteSpace:'nowrap'}}>1 {editForm.original_currency} =</span>
+                        <span style={{fontSize: FS.lg,...s.upper,opacity:0.5,whiteSpace:'nowrap'}}>1 {editForm.original_currency} =</span>
                         <input type="number" step="0.000001"
                           value={editForm.exchange_rate}
                           onChange={e => {
@@ -2135,8 +3225,8 @@ const HomeTab = () => (
                             setEditForm({...editForm, exchange_rate: rate, total_amount: parseFloat((origAmt * (parseFloat(rate)||0)).toFixed(2))});
                           }}
                           style={{...s.input,width:100,background:'#fff',padding:'6px 10px',flex:'0 0 auto'}}/>
-                        <span style={{fontSize:10,...s.upper,opacity:0.5}}>{defCur}</span>
-                        <span style={{fontSize: 12,fontWeight:700,...s.tabnum,marginLeft:'auto'}}>≈ {fmt(parseFloat(editForm.total_amount)||0, defCur)}</span>
+                        <span style={{fontSize: FS.lg,...s.upper,opacity:0.5}}>{defCur}</span>
+                        <span style={{fontSize: FS.lg,fontWeight:700,...s.tabnum,marginLeft:'auto'}}>≈ {fmt(parseFloat(editForm.total_amount)||0, defCur)}</span>
                       </div>
                     )}
 
@@ -2171,7 +3261,7 @@ const HomeTab = () => (
                       <div style={{marginBottom:8}}>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                            <span style={{fontSize: 12,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
+                            <span style={{fontSize: FS.lg,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
                             <input type="number" min="0" placeholder="0" value={editForm.shares?.[n]||''} onChange={e=>{
                               const ns2 = {...editForm.shares, [n]:e.target.value};
                               const total = parseFloat(editForm.total_amount)||0;
@@ -2182,11 +3272,11 @@ const HomeTab = () => (
                                 setEditForm({...editForm,shares:ns2,_computedShares:computed});
                               } else setEditForm({...editForm,shares:ns2});
                             }} style={{...s.input,flex:1,padding:'8px 10px'}}/>
-                            <span style={{fontSize:10,opacity:0.35,...s.upper}}>parts</span>
+                            <span style={{fontSize: FS.lg,opacity:0.35,...s.upper}}>parts</span>
                           </div>
                         ))}
                         {editForm._computedShares && (
-                          <div style={{background:'#F0F0EA',borderRadius:8,padding:6,fontSize:10,opacity:0.6}}>
+                          <div style={{background:'#F0F0EA',borderRadius:8,padding:6,fontSize: FS.lg,opacity:0.6}}>
                             {Object.entries(editForm._computedShares).map(([n,a])=><span key={n} style={{marginRight:8}}>{n}: {fmt(a,defCur)}</span>)}
                           </div>
                         )}
@@ -2196,19 +3286,19 @@ const HomeTab = () => (
                       <div style={{marginBottom:8}}>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                            <span style={{fontSize: 12,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
+                            <span style={{fontSize: FS.lg,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
                             <input type="number" min="0" max="100" placeholder="0" value={editForm.shares?.[n]||''} onChange={e=>setEditForm({...editForm,shares:{...editForm.shares,[n]:e.target.value}})} style={{...s.input,flex:1,padding:'8px 10px'}}/>
-                            <span style={{fontSize:10,opacity:0.35}}>%</span>
+                            <span style={{fontSize: FS.lg,opacity:0.35}}>%</span>
                           </div>
                         ))}
-                        {(()=>{const sum=Object.values(editForm.shares||{}).reduce((ss2,v)=>ss2+(parseFloat(v)||0),0);return <div style={{fontSize:10,padding:4,color:Math.abs(sum-100)<0.01?'#15803d':'#dc2626'}}>Total: {sum.toFixed(1)}%</div>;})()}
+                        {(()=>{const sum=Object.values(editForm.shares||{}).reduce((ss2,v)=>ss2+(parseFloat(v)||0),0);return <div style={{fontSize: FS.lg,padding:4,color:Math.abs(sum-100)<0.01?'#15803d':'#dc2626'}}>Total: {sum.toFixed(1)}%</div>;})()}
                       </div>
                     )}
                     {(editForm.split_type==='custom'||editForm.split_type==='full') && (
                       <div style={{marginBottom:8}}>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                            <span style={{fontSize: 12,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
+                            <span style={{fontSize: FS.lg,width:50,...s.upper,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n}</span>
                             <input type="number" value={editForm.shares?.[n]||0} onChange={e=>setEditForm({...editForm,shares:{...editForm.shares,[n]:parseFloat(e.target.value)||0}})} style={{...s.input,flex:1,padding:'8px 10px'}}/>
                           </div>
                         ))}
@@ -2216,11 +3306,11 @@ const HomeTab = () => (
                     )}
                     {editForm.split_type==='headcount' && (
                       <div style={{marginBottom:8}}>
-                        <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:4}}>Total people (incl. external)</div>
+                        <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:4}}>Total people (incl. external)</div>
                         <input type="number" min="2" placeholder="e.g. 10" value={editForm.headcount||''}
                           onChange={e=>setEditForm({...editForm,headcount:e.target.value})}
                           style={{...s.input,marginBottom:8}}/>
-                        <div style={{fontSize:10,opacity:0.4,...s.upper,marginBottom:4}}>In-app members</div>
+                        <div style={{fontSize: FS.lg,opacity:0.4,...s.upper,marginBottom:4}}>In-app members</div>
                         {names.map(n=>(
                           <div key={n} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
                             <input type="checkbox" checked={!!editForm.shares?.[n]}
@@ -2229,9 +3319,9 @@ const HomeTab = () => (
                                 if (e.target.checked) ns2[n] = 1; else delete ns2[n];
                                 setEditForm({...editForm,shares:ns2});
                               }} style={{width:14,height:14,cursor:'pointer'}}/>
-                            <span style={{fontSize:12,...s.upper}}>{n}</span>
+                            <span style={{fontSize: FS.lg,...s.upper}}>{n}</span>
                             {!!editForm.shares?.[n] && parseInt(editForm.headcount) >= 2 && (
-                              <span style={{fontSize:10,opacity:0.4,...s.tabnum,marginLeft:'auto'}}>
+                              <span style={{fontSize: FS.lg,opacity:0.4,...s.tabnum,marginLeft:'auto'}}>
                                 {fmt((parseFloat(editForm.total_amount)||0)/parseInt(editForm.headcount),defCur)}
                               </span>
                             )}
@@ -2254,159 +3344,15 @@ const HomeTab = () => (
           });
         })()}
         {filtered.length === 0 && (
-          <div style={{textAlign:'center',padding:'60px 16px',fontSize:12,...s.upper,opacity:0.2}}>
+          <div style={{textAlign:'center',padding:'60px 16px',fontSize: FS.lg,...s.upper,opacity:0.2}}>
             {expenses.length === 0 ? 'No expenses yet. Add one above!' : 'No results found.'}
           </div>
         )}
       </div>
+      )}
     </div>
   );
 
-  /* ════════════════════════════════════════════════════════════
-     STATS TAB
-     ════════════════════════════════════════════════════════════ */
-  const StatsTab = () => {
-    const STAT_EXCL = new Set(['Income','Investment','Settlement']);
-    const personTotals = {};
-    names.forEach(n => { personTotals[n] = 0; });
-    monthExpenses.forEach(e => {
-      if (STAT_EXCL.has(e.category)) return;
-      Object.entries(e.shares||{}).forEach(([n,a]) => {
-        if (n in personTotals) personTotals[n] += a;
-      });
-    });
-    const grandTotal = Object.values(personTotals).reduce((ss,v)=>ss+v, 0);
-
-    const visExps = personFilter ? monthExpenses.filter(e => e.shares?.[personFilter] > 0) : monthExpenses;
-    const catTotals = {};
-    const infoCatTotals = {};
-    visExps.forEach(e => {
-      const amt = personFilter ? (e.shares?.[personFilter] || 0) : e.total_amount;
-      if (STAT_EXCL.has(e.category)) {
-        infoCatTotals[e.category] = (infoCatTotals[e.category]||0) + amt;
-      } else {
-        catTotals[e.category] = (catTotals[e.category]||0) + amt;
-      }
-    });
-    // Add settlements for the info section
-    visibleExpenses.filter(e => e.date?.startsWith(selMonth) && e.split_type === 'settlement' && (!personFilter || e.shares?.[personFilter] > 0))
-      .forEach(e => { infoCatTotals['Settlement'] = (infoCatTotals['Settlement']||0) + e.total_amount; });
-    const catData = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
-    const infoCatData = Object.entries(infoCatTotals).sort((a,b)=>b[1]-a[1]).map(([name,value])=>({name,value}));
-
-
-    return (
-      <div style={{paddingBottom:80,padding:16}}>
-        <div style={SHELL_HEADING_STYLE}>
-          STATISTICS
-        </div>
-        {/* Month pills */}
-        <div className="se-noscroll" style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8}}>
-          {months.map(m=>(
-            <button key={m} style={s.chip(selMonth===m)} onClick={()=>setSelMonth(m)}>{m}</button>
-          ))}
-        </div>
-
-        {/* Summary Cards */}
-        <div className="se-noscroll" style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:4,marginTop:12}}>
-          <button onClick={()=>setPersonFilter('')}
-            style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(!personFilter?{background:'#222',color:'#f5f5ee'}:{})}}>
-            <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>Together</div>
-            <div style={{fontSize: 14,fontWeight:700,...s.tabnum}}>{fmt(grandTotal,defCur)}</div>
-          </button>
-          {names.map((n,i)=>{
-            const active = personFilter===n;
-            const bg = PERSON_COLORS[i%PERSON_COLORS.length];
-            return (
-              <button key={n} onClick={()=>setPersonFilter(active?'':n)}
-                style={{...s.card,flexShrink:0,minWidth:110,padding:12,cursor:'pointer',border:'none',fontFamily:MONO,...(active?{background:bg,color:'#fff'}:{})}}>
-                <div style={{fontSize:10,...s.upper,opacity:0.5,marginBottom:6}}>{n}</div>
-                <div style={{fontSize: 14,fontWeight:700,...s.tabnum}}>{fmt(personTotals[n]||0,defCur)}</div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Pie Chart */}
-        {catData.length > 0 && (
-          <div style={{...s.card,padding:16,marginTop:12}}>
-            <div style={{...s.label,marginBottom:12}}>Categories</div>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={catData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80}
-                  label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false}
-                  style={{fontSize:9,fontFamily:MONO}}>
-                  {catData.map((dd,i)=>(<Cell key={i} fill={getCat(dd.name,customCats,members).c || '#6b7280'}/>))}
-                </Pie>
-                <RTooltip formatter={(v)=>fmt(v,defCur)} contentStyle={{fontFamily:MONO,fontSize: 12}}/>
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Breakdown */}
-        {catData.length > 0 && (
-          <div style={{...s.card,padding:16,marginTop:12}}>
-            <div style={{...s.label,marginBottom:12}}>Breakdown</div>
-            {catData.map(({name,value})=>{
-              const ci = getCat(name,customCats,members);
-              const baseTotal = personFilter ? (personTotals[personFilter]||0) : grandTotal;
-              const pct = baseTotal > 0 ? (value/baseTotal*100) : 0;
-              const isExpanded = expandedStatCats.has(name);
-              const toggleCat = () => setExpandedStatCats(prev => {
-                const next = new Set(prev);
-                next.has(name) ? next.delete(name) : next.add(name);
-                return next;
-              });
-              const catExps = visExps.filter(e => e.category === name)
-                .sort((a,b) => b.total_amount - a.total_amount);
-              return (
-                <div key={name} style={{marginBottom:10}}>
-                  <button onClick={toggleCat} style={{width:'100%',background:'none',border:'none',padding:0,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:12,...s.upper}}>
-                    <span style={{display:'flex',alignItems:'center',gap:5}}>
-                      <ChevronDown size={12} style={{color:'#9ca3af',transform:isExpanded?'none':'rotate(-90deg)',transition:'transform 0.15s',flexShrink:0}}/>
-                      {ci.emoji} {name}
-                    </span>
-                    <span style={{fontWeight:700,...s.tabnum}}>{fmt(value,defCur)} <span style={{fontSize:10,opacity:0.35}}>({pct.toFixed(0)}%)</span></span>
-                  </button>
-                  <div style={{height:6,background:'#F0F0EA',borderRadius:99,marginTop:4,overflow:'hidden'}}>
-                    <div style={{height:'100%',borderRadius:99,width:`${pct}%`,background:ci.c,transition:'width 0.5s ease'}}/>
-                  </div>
-                  {isExpanded && catExps.length > 0 && (
-                    <div style={{marginTop:6,paddingLeft:4,borderLeft:`2px solid ${ci.c}40`}}>
-                      {catExps.map((e,i) => (
-                        <div key={e.id||i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 6px',fontSize: 12,...s.upper,borderRadius:6,marginBottom:1,background:i%2===0?'transparent':'#fafafa'}}>
-                          <div style={{flex:1,overflow:'hidden'}}>
-                            <span style={{color:'#374151',fontWeight:600}}>{e.item||'—'}</span>
-                            <span style={{opacity:0.4,marginLeft:6,fontSize:9}}>{e.date?.slice(5)}</span>
-                          </div>
-                          <span style={{fontWeight:700,...s.tabnum,color:ci.tx,flexShrink:0,marginLeft:8}}>{fmt(personFilter ? (e.shares?.[personFilter]||0) : e.total_amount,defCur)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {infoCatData.length > 0 && (
-              <div style={{marginTop:12,paddingTop:10,borderTop:'1px dashed #e5e7eb'}}>
-                <div style={{fontSize:9,...s.upper,opacity:0.4,marginBottom:8,letterSpacing:'0.05em'}}>For information</div>
-                {infoCatData.map(({name,value}) => {
-                  const ci = getCat(name,customCats,members);
-                  return (
-                    <div key={name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',fontSize: 12,...s.upper,opacity:0.6}}>
-                      <span style={{display:'flex',alignItems:'center',gap:5}}>{ci.emoji} {name}</span>
-                      <span style={{...s.tabnum,fontWeight:600}}>{fmt(value,defCur)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   /* ── Webhook Token ── */
   const generateWebhookToken = async () => {
@@ -2428,603 +3374,199 @@ const HomeTab = () => (
     showToast('Token revoked');
   };
 
-  /* ════════════════════════════════════════════════════════════
-     SETTINGS TAB
-     ════════════════════════════════════════════════════════════ */
-  const SettingsTab = () => (
-    <div style={{paddingBottom:80,padding:16}}>
-      <div style={SHELL_HEADING_STYLE}>SETTINGS</div>
-      {/* Session */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:12}}>Session</div>
-        <div style={{fontSize:12,...s.upper,opacity:0.5,marginBottom:4}}>Logged in as <strong style={{opacity:1}}>{user.email}</strong></div>
-        <div style={{fontSize:12,...s.upper,opacity:0.5,marginBottom:12}}>List: <strong style={{opacity:1}}>{currentList.name}</strong></div>
-        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          <button style={s.sm(false)} onClick={()=>{setCurrentList(null);localStorage.removeItem('splitease_list');setTab('home');}}>Switch List</button>
-          <button style={{...s.sm(false),color:'#dc2626',display:'flex',alignItems:'center',gap:4}} onClick={logout}><LogOut size={12}/> Log Out</button>
-        </div>
-        <div style={{marginTop:16,paddingTop:12,borderTop:'1px solid #eee'}}>
-          {!confirmDeleteList ? (
-            <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5}} onClick={()=>setConfirmDeleteList(true)}>Delete this list…</button>
-          ) : (
-            <div style={{background:'#fef2f2',borderRadius:12,padding:12}}>
-              <div style={{fontSize:12,fontWeight:700,color:'#dc2626',...s.upper,marginBottom:4}}>Delete "{currentList.name}"?</div>
-              <div style={{fontSize:10,color:'#dc2626',opacity:0.6,marginBottom:8}}>This will permanently delete everything. Cannot be undone.</div>
-              <div style={{display:'flex',gap:8}}>
-                <button style={{...s.sm(true),background:'#dc2626',display:'flex',alignItems:'center',gap:4}} onClick={deleteList}><Trash2 size={12}/> Yes, delete</button>
-                <button style={s.sm(false)} onClick={()=>setConfirmDeleteList(false)}>Cancel</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Invite Code */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:8}}>Invite Code</div>
-        <div style={{background:'#F0F0EA',padding:'12px 14px',borderRadius:12,fontSize:14,fontWeight:700,letterSpacing:'0.1em',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <span>{currentList.invite_code}</span>
-          <button onClick={()=>{navigator.clipboard?.writeText(currentList.invite_code);showToast('Copied!');}}
-            style={{width:32,height:32,borderRadius:12,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
-            <Copy size={14}/>
-          </button>
-        </div>
-        <div style={{fontSize:10,...s.upper,opacity:0.25,marginTop:8}}>Share this code so others can join</div>
-      </div>
-
-      {/* Members */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:12}}>Members ({members.length})</div>
-        {members.map((m,i) => (
-          <div key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:10,background:'#F0F0EA',borderRadius:12,marginBottom:6}}>
-            <div style={{width:32,height:32,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:12,fontWeight:700,flexShrink:0,background:PERSON_COLORS[i%PERSON_COLORS.length]}}>
-              {m.display_name?.[0]?.toUpperCase()}
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              {m.user_id === user.id && nameEditing ? (
-                <div style={{display:'flex',gap:4}}>
-                  <input value={editName} onChange={e=>setEditName(e.target.value)} style={{...s.input,flex:1,padding:'6px 10px',fontSize:16}}/>
-                  <button onClick={()=>{updateMyName(editName);setNameEditing(false);showToast('Name updated');}} style={{background:'none',border:'none',cursor:'pointer',color:'#15803d'}}><Check size={16}/></button>
-                  <button onClick={()=>setNameEditing(false)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.4}}><X size={16}/></button>
-                </div>
-              ) : (
-                <div style={{display:'flex',alignItems:'center',gap:4}}>
-                  <span style={{fontSize:12,fontWeight:700,...s.upper}}>{m.display_name}</span>
-                  {m.user_id === user.id && <>
-                    <span style={{fontSize:9,...s.upper,fontWeight:700,background:'#e8e8df',padding:'2px 6px',borderRadius:9999}}>you</span>
-                    <button onClick={()=>{setEditName(m.display_name);setNameEditing(true);}} style={{background:'none',border:'none',cursor:'pointer',opacity:0.3,marginLeft:4}}><Pencil size={12}/></button>
-                  </>}
-                </div>
-              )}
-              <div style={{fontSize:10,opacity:0.35,letterSpacing:'0.04em',marginTop:1}}>{m.email}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Currency & Rates */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:8}}>Currency & Exchange Rates</div>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-          <span style={{background:'#222',color:'#f5f5ee',padding:'8px 14px',borderRadius:12,fontSize:14,fontWeight:700,letterSpacing:'0.1em'}}>{defCur}</span>
-          <span style={{fontSize:10,...s.upper,opacity:0.35}}>Set at list creation</span>
-        </div>
-        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
-          <span style={{fontSize:10,opacity:0.4}}>Rates: {ratesDate || 'N/A'}</span>
-          <button onClick={()=>{fetchRates(defCur);showToast('Rates refreshed');}} style={{background:'none',border:'none',cursor:'pointer',color:'#222',opacity:0.4}}><RefreshCw size={12}/></button>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',gap:6}}>
-          {ALL_CUR.filter(c => c !== defCur).map(c => (
-            <div key={c} style={{background:'#F0F0EA',borderRadius:12,padding:'8px 10px',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize: 12}}>
-              <span style={{fontWeight:700,...s.upper}}>{CURR_FLAG[c]||''} {c}</span>
-              <span style={{opacity:0.4,...s.tabnum}}>{rates[c] ? rates[c].toFixed(NO_DEC.has(c)?0:2) : '–'}</span>
-            </div>
-          ))}
-        </div>
-        <div style={{fontSize:10,...s.upper,opacity:0.25,marginTop:8}}>1 {defCur} = listed amount in each currency</div>
-      </div>
-
-      {/* Categories */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:8}}>Categories</div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
-          {Object.entries(BASE_CATS).map(([n,c])=>(
-            <span key={n} style={s.tag(c.bg,c.tx)}>{c.emoji} {n}</span>
-          ))}
-          {Object.entries(customCats).map(([n,c])=>(
-            <span key={n} style={{...s.tag(c.bg||'#ecfeff',c.tx||'#0e7490'),display:'flex',alignItems:'center',gap:4}}>
-              {c.emoji} {n}
-              <button onClick={()=>deleteCustomCat(n)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}><X size={10}/></button>
-            </span>
-          ))}
-        </div>
-        <div style={{display:'flex',gap:8}}>
-          <input placeholder="New category…" value={newCatName} onChange={e=>setNewCatName(e.target.value)}
-            onKeyDown={e=>{if(e.key==='Enter')addCustomCat();}} style={{...s.input,flex:1}}/>
-          <button style={s.sm(true)} onClick={addCustomCat}><Plus size={14}/></button>
-        </div>
-      </div>
-
-      {/* Learned */}
-      {Object.keys(catSuggestions).length > 0 && (
-        <div style={{...s.card,marginBottom:12}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-            <div style={s.label}>Category Suggestions</div>
-            <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.6,padding:0}} onClick={()=>{setCatSuggestions({});saveSetting('categorySuggestions',{});showToast('Cleared all suggestions');}}>Clear all</button>
-          </div>
-          <div style={{display:'grid',gap:6}}>
-            {Object.entries(catSuggestions).sort(([a],[b]) => a.localeCompare(b)).map(([w,suggestion])=>(
-              <div key={w} style={{display:'grid',gap:6,background:'#F0F0EA',padding:'8px 10px',borderRadius:10}}>
-                <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto auto',gap:8,alignItems:'center'}}>
-                  <input
-                    value={Object.prototype.hasOwnProperty.call(overrideDrafts, w) ? overrideDrafts[w] : w}
-                    onChange={e=>setOverrideDrafts(prev => ({ ...prev, [w]: e.target.value }))}
-                    onBlur={()=>renameCategorySuggestion(w)}
-                    onKeyDown={e=>{ if (e.key === 'Enter') renameCategorySuggestion(w); }}
-                    style={{...s.input, padding:'8px 10px', fontSize: 16, background:'#fff', wordBreak:'break-word'}}
-                  />
-                  <select
-                    value={suggestion.category}
-                    onChange={e=>updateCategorySuggestion(w, { category: e.target.value })}
-                    style={{fontSize:10,fontFamily:MONO,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',background:'#fff',border:'1px solid #ddd',borderRadius:8,padding:'6px 8px',cursor:'pointer',outline:'none'}}
-                  >
-                    {allCatNames.map(name => <option key={name} value={name}>{name}</option>)}
-                  </select>
-                  <button onClick={()=>renameCategorySuggestion(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
-                    <Check size={12}/>
-                  </button>
-                  <button onClick={()=>acceptCategorySuggestion(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.7,padding:0,lineHeight:1,color:'#15803d'}}>
-                    <Check size={14}/>
-                  </button>
-                  <button onClick={()=>dismissCategorySuggestion(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
-                    <X size={12}/>
-                  </button>
-                </div>
-                <div style={{fontSize:10,opacity:0.5,lineHeight:1.5}}>
-                  Suggested from "{suggestion.source || w}"{suggestion.autoCategory ? ` instead of ${suggestion.autoCategory}` : ''}.
-                  {suggestionExamples[w]?.total > 0 ? ` Seen ${suggestionExamples[w].total} time${suggestionExamples[w].total === 1 ? '' : 's'}: ${suggestionExamples[w].examples.map((example) => `"${example}"`).join(', ')}` : ''}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {Object.keys(catOverrides).length > 0 && (
-        <div style={{...s.card,marginBottom:12}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-            <div style={s.label}>Learned Categories</div>
-            <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.6,padding:0}} onClick={()=>{setCatOverrides({});saveSetting('categoryOverrides',{});showToast('Cleared all overrides');}}>Clear all</button>
-          </div>
-            <div style={{display:'grid',gap:6}}>
-            {Object.entries(catOverrides).sort(([a],[b]) => a.localeCompare(b)).map(([w,c])=>(
-              <div key={w} style={{display:'grid',gap:6,background:'#F0F0EA',padding:'8px 10px',borderRadius:10}}>
-                <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:8,alignItems:'center'}}>
-                  <input
-                    value={Object.prototype.hasOwnProperty.call(overrideDrafts, w) ? overrideDrafts[w] : w}
-                    onChange={e=>setOverrideDrafts(prev => ({ ...prev, [w]: e.target.value }))}
-                    onBlur={()=>renameCatOverride(w)}
-                    onKeyDown={e=>{ if (e.key === 'Enter') renameCatOverride(w); }}
-                    style={{...s.input, padding:'8px 10px', fontSize: 16, background:'#fff', wordBreak:'break-word'}}
-                  />
-                  <select
-                    value={c}
-                    onChange={e=>updateCatOverride(w, e.target.value)}
-                    style={{fontSize:10,fontFamily:MONO,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',background:'#fff',border:'1px solid #ddd',borderRadius:8,padding:'6px 8px',cursor:'pointer',outline:'none'}}
-                  >
-                    {allCatNames.map(name => <option key={name} value={name}>{name}</option>)}
-                  </select>
-                  <button onClick={()=>renameCatOverride(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
-                    <Check size={12}/>
-                  </button>
-                  <button onClick={()=>deleteCatOverride(w)} style={{background:'none',border:'none',cursor:'pointer',opacity:0.5,padding:0,lineHeight:1}}>
-                    <X size={12}/>
-                  </button>
-                </div>
-                {overrideExamples[w]?.total > 0 && (
-                  <div style={{fontSize:10,opacity:0.5,lineHeight:1.5}}>
-                    Seen {overrideExamples[w].total} time{overrideExamples[w].total === 1 ? '' : 's'}:
-                    {' '}
-                    {overrideExamples[w].examples.map((example, index) => (
-                      <span key={example}>
-                        "{example}"{index < overrideExamples[w].examples.length - 1 ? ', ' : ''}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Import/Export */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:8}}>Import & Export</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-          <button style={{...s.sm(false),textAlign:'center',display:'flex',alignItems:'center',justifyContent:'center',gap:4}} onClick={exportJSON}><Download size={12}/> JSON</button>
-          <button style={{...s.sm(false),textAlign:'center',display:'flex',alignItems:'center',justifyContent:'center',gap:4}} onClick={exportCSV}><Download size={12}/> CSV</button>
-          <button style={{...s.sm(false),textAlign:'center',display:'flex',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>fileRef.current?.click()}><Upload size={12}/> JSON</button>
-          <button style={{...s.sm(false),textAlign:'center',display:'flex',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>csvRef.current?.click()}><Upload size={12}/> CSV</button>
-        </div>
-        <input ref={fileRef} type="file" accept=".json" style={{display:'none'}} onChange={importJSON}/>
-        <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={importCSV}/>
-        <div style={{fontSize:10,...s.upper,opacity:0.25,marginTop:8}}>CSV import supports old 2-person format (your_share/partner_share columns)</div>
-      </div>
-
-      {/* Notifications */}
-      {pushSupported && (
-        <div style={{...s.card,marginBottom:12}}>
-          <div style={{...s.label,marginBottom:8}}>Push Notifications</div>
-          {pushPermission === 'denied' ? (
-            <div style={{fontSize: 12,opacity:0.5,lineHeight:1.6}}>
-              Notifications are blocked in your browser settings. Enable them for this site to receive alerts.
-            </div>
-          ) : pushSubscribed ? (
-            <div>
-              <div style={{fontSize: 12,opacity:0.5,marginBottom:10}}>You'll receive a notification when someone adds or edits an expense in this list.</div>
-              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                <button
-                  style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
-                  onClick={() => { showToast('Sending test…'); sendNotification('🔔 Test', 'Push notifications are working!', 'test'); }}
-                >
-                  Send test notification
-                </button>
-                <button
-                  style={{...s.sm(false),display:'flex',alignItems:'center',gap:4,color:'#dc2626'}}
-                  onClick={pushUnsubscribe}
-                  disabled={pushLoading}
-                >
-                  {pushLoading ? 'Turning off…' : 'Turn off'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div style={{fontSize: 12,opacity:0.5,marginBottom:10}}>Get notified when someone adds or edits an expense in this list.</div>
-              <button
-                style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}}
-                onClick={pushSubscribe}
-                disabled={pushLoading}
-              >
-                {pushLoading ? 'Enabling…' : 'Enable notifications'}
-              </button>
-              {/iphone|ipad|ipod/i.test(navigator.userAgent) && pushPermission !== 'granted' && (
-                <div style={{fontSize:10,opacity:0.4,marginTop:6}}>
-                  On iOS, install SplitEase to your Home Screen first (Share → Add to Home Screen).
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {can('webhook') && (
-        <div style={{...s.card,marginBottom:12}}>
-          <div style={{...s.label,marginBottom:8}}>Auto-Add from Bank Notifications</div>
-          <div style={{fontSize: 12,opacity:0.5,lineHeight:1.6,marginBottom:10}}>
-            Use MacroDroid on Android to automatically add expenses when you receive a bank or Google Wallet notification.
-          </div>
-          {!webhookToken ? (
-            <button style={{...s.sm(true),display:'flex',alignItems:'center',gap:4}} onClick={generateWebhookToken} disabled={webhookLoading}>
-              {webhookLoading ? 'Generating…' : 'Generate webhook token'}
-            </button>
-          ) : (
-            <div>
-              <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Webhook URL</div>
-              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
-                <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.6}}>
-                  {`https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook`}
-                </code>
-                <button onClick={()=>{navigator.clipboard?.writeText('https://datppieeeobzzmaighwt.supabase.co/functions/v1/expense-webhook');showToast('URL copied');}}
-                  style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                  <Copy size={12}/>
-                </button>
-              </div>
-              <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>Secret token (keep private)</div>
-              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
-                <code style={{fontSize:10,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',letterSpacing:'0.05em'}}>
-                  {webhookToken}
-                </code>
-                <button onClick={()=>{navigator.clipboard?.writeText(webhookToken);showToast('Token copied');}}
-                  style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                  <Copy size={12}/>
-                </button>
-              </div>
-              <div style={{fontSize:10,...s.upper,opacity:0.4,marginBottom:4}}>MacroDroid POST body (Content Body tab)</div>
-              <div style={{display:'flex',alignItems:'flex-start',gap:6,marginBottom:6}}>
-                <code style={{fontSize:9,background:'#F0F0EA',padding:'6px 8px',borderRadius:8,flex:1,wordBreak:'break-all',lineHeight:1.8}}>
-                  {`{"secret":"${webhookToken}","item":"{lv=merchant}","amount":"{lv=amount}","currency":"AUD","split":"{lv=split}"}`}
-                </code>
-                <button onClick={()=>{navigator.clipboard?.writeText(`{"secret":"${webhookToken}","item":"{lv=merchant}","amount":"{lv=amount}","currency":"AUD","split":"{lv=split}"}`);showToast('Body copied');}}
-                  style={{width:32,height:32,borderRadius:8,border:'none',background:'#e8e8df',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:2}}>
-                  <Copy size={12}/>
-                </button>
-              </div>
-              <div style={{fontSize:10,opacity:0.35,lineHeight:1.6,marginBottom:10}}>
-                <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>{'{lv=split}'}</code> is a number 0–100 = other person's share. <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>0</code> = personal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>50</code> = equal · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>100</code> = fully theirs · <code style={{background:'#F0F0EA',padding:'1px 4px',borderRadius:4}}>30</code> = you 70%, them 30%
-              </div>
-              <button style={{...s.ghost,fontSize:10,color:'#dc2626',opacity:0.5,padding:0}} onClick={revokeWebhookToken}>Revoke token</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tips */}
-      <div style={{...s.card,marginBottom:12}}>
-        <div style={{...s.label,marginBottom:8}}>Quick Add Tips</div>
-        <div style={{fontSize: 12,letterSpacing:'0.04em',opacity:0.4,lineHeight:1.8}}>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>dinner 50</code> — equal split in {defCur}</div>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>coffee ¥500</code> — auto-converts from CNY</div>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>taxi 30 Alice paid</code> — Alice paid</div>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>groceries 80 personal</code> — no split</div>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>dinner 120 for Bob</code> — 100% Bob's</div>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>rent 900 60/40</code> — custom ratio</div>
-          <div><code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,opacity:1,color:'#1a1a1a'}}>gift 50 70% Alice</code> — 70% Alice, rest split</div>
-        </div>
-      </div>
-
-      {/* Permissions note — only visible to app owner */}
-      {can('webhook') && (
-        <div style={{...s.card,marginBottom:12,borderLeft:'3px solid #e5e7eb'}}>
-          <div style={{...s.label,marginBottom:8}}>Feature Permissions</div>
-          <div style={{fontSize:12,opacity:0.5,lineHeight:1.8,marginBottom:10}}>
-            Manage which users can access restricted features via the Supabase Table Editor.
-          </div>
-          <div style={{fontSize:11,lineHeight:2,opacity:0.6}}>
-            <div>1. Go to <strong style={{opacity:1}}>supabase.com</strong> → your project</div>
-            <div>2. Table Editor → <code style={{background:'#F0F0EA',padding:'2px 6px',borderRadius:4,color:'#1a1a1a',opacity:1}}>user_permissions</code></div>
-            <div>3. Insert a row with the user's <strong style={{opacity:1}}>email</strong> and one of:</div>
-            <div style={{paddingLeft:12,marginTop:2,display:'flex',flexDirection:'column',gap:4}}>
-              {['investing','webhook','shopper'].map(f => (
-                <code key={f} style={{background:'#F0F0EA',padding:'2px 8px',borderRadius:4,color:'#1a1a1a',opacity:1,display:'inline-block',width:'fit-content'}}>{f}</code>
-              ))}
-            </div>
-            <div style={{marginTop:6}}>4. Delete the row to revoke access.</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  const InvestingTab = () => {
-    const topLevelItems = [
-      { id: 'portfolio', label: 'Portfolio' },
-      { id: 'securities', label: 'Securities' },
-      { id: 'chat', label: 'Chat' },
-      { id: 'tools', label: 'Tools' },
-    ];
-    const portfolioItems = [
-      { id: 'summary', label: 'Summary' },
-      { id: 'statistics', label: 'Statistics' },
-      { id: 'portfolio', label: 'Holdings' },
-    ];
-    const securitiesItems = [
-      { id: 'pnl', label: 'P&L' },
-      { id: 'statistics', label: 'Statistics' },
-      { id: 'transactions', label: 'Transactions' },
-    ];
-    const handleInvestingViewChange = (nextView) => {
-      setInvestingView(nextView);
-      if (nextView === 'portfolio' && !['portfolio', 'summary', 'statistics'].includes(investingPortfolioView)) {
-        setInvestingPortfolioView('summary');
-      }
-      if (nextView === 'securities' && !['statistics', 'transactions', 'pnl'].includes(investingSecuritiesView)) {
-        setInvestingSecuritiesView('pnl');
-      }
-    };
-
-    return (
-      <div>
-        <div style={{ padding: '16px 16px 0' }}>
-          <div style={SHELL_HEADING_STYLE}>INVESTING</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 8 }}>
-            {topLevelItems.map((item) => (
-              <button key={item.id} onClick={() => handleInvestingViewChange(item.id)} style={s.sm(investingView === item.id)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
-          {investingView === 'portfolio' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 6 }}>
-              {portfolioItems.map((item) => (
-                <button key={item.id} onClick={() => setInvestingPortfolioView(item.id)} style={s.split(investingPortfolioView === item.id)}>
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-          {investingView === 'securities' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 6 }}>
-              {securitiesItems.map((item) => (
-                <button key={item.id} onClick={() => setInvestingSecuritiesView(item.id)} style={s.split(investingSecuritiesView === item.id)}>
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-          {investingView === 'tools' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, paddingBottom: 6 }}>
-              <button onClick={() => setInvestingToolsView('portfolio')} style={s.split(investingToolsView === 'portfolio')}>
-                Portfolio Tools
-              </button>
-              <button onClick={() => setInvestingToolsView('transactions')} style={s.split(investingToolsView === 'transactions')}>
-                Securities Tools
-              </button>
-            </div>
-          )}
-        </div>
-
-        {investingView === 'portfolio' && investingPortfolioView === 'portfolio' && (
-          <FinancesTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            rates={rates}
-            balanceTxns={txns}
-            balanceCurrency={defCur}
-            expenseEntries={expenses}
-            expenseListName={currentList?.name || ''}
-            expenseListCurrency={defCur}
-            forcedView="table"
-            showViewToggle={false}
-            embedded
-            title="Investing"
-          />
-        )}
-        {investingView === 'portfolio' && investingPortfolioView === 'summary' && (
-          <FinancesTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            rates={rates}
-            balanceTxns={txns}
-            balanceCurrency={defCur}
-            expenseEntries={expenses}
-            expenseListName={currentList?.name || ''}
-            expenseListCurrency={defCur}
-            forcedView="summary"
-            showViewToggle={false}
-            embedded
-            title="Investing"
-          />
-        )}
-        {investingView === 'portfolio' && investingPortfolioView === 'statistics' && (
-          <FinancesTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            rates={rates}
-            balanceTxns={txns}
-            balanceCurrency={defCur}
-            expenseEntries={expenses}
-            expenseListName={currentList?.name || ''}
-            expenseListCurrency={defCur}
-            forcedView="statistics"
-            showViewToggle={false}
-            embedded
-            title="Investing"
-          />
-        )}
-        {investingView === 'chat' && (
-          <FinancesTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            rates={rates}
-            balanceTxns={txns}
-            balanceCurrency={defCur}
-            expenseEntries={expenses}
-            expenseListName={currentList?.name || ''}
-            expenseListCurrency={defCur}
-            forcedView="chat"
-            showViewToggle={false}
-            embedded
-            title="Investing"
-          />
-        )}
-        {investingView === 'securities' && investingSecuritiesView === 'statistics' && (
-          <SecuritiesStatisticsTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-          />
-        )}
-        {investingView === 'securities' && investingSecuritiesView === 'transactions' && (
-          <TransactionsTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            forcedView="ledger"
-            showViewToggle={false}
-            embedded
-          />
-        )}
-        {investingView === 'securities' && investingSecuritiesView === 'pnl' && (
-          <TransactionsTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            forcedView="pnl"
-            showViewToggle={false}
-            embedded
-          />
-        )}
-        {investingView === 'tools' && investingToolsView === 'portfolio' && (
-          <FinancesTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            rates={rates}
-            balanceTxns={txns}
-            balanceCurrency={defCur}
-            forcedView="settings"
-            showViewToggle={false}
-            embedded
-            title="Investing"
-          />
-        )}
-        {investingView === 'tools' && investingToolsView === 'transactions' && (
-          <TransactionsTab
-            user={user}
-            sb={sb}
-            showToast={showToast}
-            forcedView="settings"
-            showViewToggle={false}
-            embedded
-          />
-        )}
-      </div>
-    );
-  };
 
   /* ════════════════════════════════════════════════════════════
      MAIN LAYOUT
      ════════════════════════════════════════════════════════════ */
-  return (
-    <div className="se" style={{...s.page,maxWidth:480,margin:'0 auto',position:'relative'}}>
-      <style>{THEME_CSS}</style>
-      {ToastEl}
-      {ConfirmModal}
 
-      {tab === 'home' && HomeTab()}
-      {tab === 'stats' && StatsTab()}
-      {tab === 'settings' && SettingsTab()}
-      {can('investing') && tab === 'investing' && InvestingTab()}
-      {tab === 'shopper' && <ShopperTab />}
+  const navItems = effectiveNavConfig
+    .filter(t => t.nav && t.id !== 'stats')
+    .flatMap(t => (t.id === 'investing' && t.groups)
+      ? t.groups.flatMap(group => group.items)
+      : [t]
+    )
+    .filter(t => t.action);
 
-      {tab !== 'investing' && tab !== 'shopper' && (
+  const isNavItemActive = (t) => {
+    if (t.id === 'investing') {
+      return showInvestingPicker || t.groups?.some(group =>
+        group.items.some(item => isNavItemActive(item))
+      );
+    }
+    if (!t.action) return false;
+    if (t.id === 'sec_securities') {
+      return tab === 'investing'
+        && investingView === 'securities'
+        && ['table', 'pnl', 'watchlist', 'statistics', 'transactions'].includes(investingSecuritiesView);
+    }
+    const actionTab = t.action.tab === 'stats' ? 'home' : t.action.tab;
+    if (actionTab !== tab) return false;
+    if (actionTab === 'home') {
+      const actionHomeView = t.action.homeView || (t.action.tab === 'stats' ? 'stats' : 'expenses');
+      if (actionHomeView !== homeView) return false;
+    }
+    if (t.action.investingView && t.action.investingView !== investingView) return false;
+    if (t.action.portfolioView && t.action.portfolioView !== investingPortfolioView) return false;
+    if (t.action.securitiesView && t.action.securitiesView !== investingSecuritiesView) return false;
+    return true;
+  };
+
+  const NavButton = ({ t }) => {
+    const active = isNavItemActive(t);
+    return (
+      <button
+        onClick={() => navigate(t.action)}
+        style={isWide ? {
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px', marginBottom: 2, width: '100%',
+          border: 'none', cursor: 'pointer', fontFamily: MONO,
+          transition: 'all 0.15s', color: CLAY.text, textAlign: 'left',
+          borderRadius: 14, background: active ? CLAY.surf2 : 'transparent',
+          boxShadow: active ? CLAY.inset : 'none', opacity: active ? 1 : 0.45,
+          fontSize: FS.lg,
+        } : {
+          flex: '0 0 76px', display: 'flex', flexDirection: 'column', alignItems: 'center',
+          padding: '8px 6px 6px', border: 'none', cursor: 'pointer', fontFamily: MONO,
+          transition: 'all 0.2s', color: CLAY.text, borderRadius: 14,
+          background: active ? CLAY.surf2 : 'transparent',
+          boxShadow: active ? CLAY.inset : 'none', opacity: active ? 1 : 0.4,
+        }}
+      >
+        <span style={{ fontSize: isWide ? 18 : 20 }}>{t.emoji}</span>
+        <span style={isWide
+          ? { fontWeight: active ? FW.semibold : FW.normal }
+          : { fontSize: FS.compact, fontWeight: 600, marginTop: 3 }
+        }>{t.label}</span>
+      </button>
+    );
+  };
+
+  const tabContent = (
+    <>
+      {tab === 'home' && (homeView === 'stats' ? <HomeStatsView /> : HomeTab())}
+      <React.Suspense fallback={<div style={{padding:'60px 16px',textAlign:'center',fontFamily:MONO,color:CLAY.textLt,fontSize:FS.lg}}>Loading…</div>}>
+        {tab === 'stats' && <StatsTabLazy {...statsProps} />}
+        {tab === 'settings' && <SettingsTabLazy user={user} currentList={currentList} setCurrentList={setCurrentList} members={members} confirmDeleteList={confirmDeleteList} setConfirmDeleteList={setConfirmDeleteList} deleteList={deleteList} logout={logout} showToast={showToast} defCur={defCur} ratesDate={ratesDate} rates={rates} fetchRates={fetchRates} customCats={customCats} setCustomCats={setCustomCats} addCustomCat={addCustomCat} deleteCustomCat={deleteCustomCat} newCatName={newCatName} setNewCatName={setNewCatName} catSuggestions={catSuggestions} setCatSuggestions={setCatSuggestions} overrideDrafts={overrideDrafts} setOverrideDrafts={setOverrideDrafts} suggestionExamples={suggestionExamples} renameCategorySuggestion={renameCategorySuggestion} updateCategorySuggestion={updateCategorySuggestion} allCatNames={allCatNames} acceptCategorySuggestion={acceptCategorySuggestion} dismissCategorySuggestion={dismissCategorySuggestion} catOverrides={catOverrides} setCatOverrides={setCatOverrides} overrideExamples={overrideExamples} renameCatOverride={renameCatOverride} updateCatOverride={updateCatOverride} deleteCatOverride={deleteCatOverride} saveSetting={saveSetting} pushSupported={pushSupported} pushPermission={pushPermission} pushSubscribed={pushSubscribed} pushLoading={pushLoading} pushSubscribe={pushSubscribe} pushUnsubscribe={pushUnsubscribe} sendNotification={sendNotification} notificationPrefs={notificationPrefs} updateNotificationPrefs={updateNotificationPrefs} webhookToken={webhookToken} webhookLoading={webhookLoading} generateWebhookToken={generateWebhookToken} revokeWebhookToken={revokeWebhookToken} editName={editName} setEditName={setEditName} nameEditing={nameEditing} setNameEditing={setNameEditing} updateMyName={updateMyName} can={can} setTab={setTab} txns={txns} expenses={expenses} setExpenses={setExpenses} onImported={() => currentList && selectList(currentList)} />}
+        {can('investing') && tab === 'investing' && <InvestingTabLazy user={user} showToast={showToast} sendNotification={sendNotification} rates={rates} txns={txns} defCur={defCur} expenses={expenses} currentList={currentList} investingView={investingView} setInvestingView={setInvestingView} investingPortfolioView={investingPortfolioView} setInvestingPortfolioView={setInvestingPortfolioView} investingSecuritiesView={investingSecuritiesView} setInvestingSecuritiesView={setInvestingSecuritiesView} pushSupported={pushSupported} pushSubscribed={pushSubscribed} pushLoading={pushLoading} pushSubscribe={pushSubscribe} pushUnsubscribe={pushUnsubscribe} />}
+        {tab === 'shopper' && <ShopperTab />}
+        {tab === 'tasks' && <TasksTabLazy user={user} sb={sb} showToast={showToast} focusRequest={taskInputFocusRequest} />}
+        {can('travel') && tab === 'travel' && <TravelTabLazy user={user} sb={sb} showToast={showToast} />}
+        {tab === 'mail' && <MailTabLazy user={user} defCur={defCur} showToast={showToast} addExpenseCandidate={addMailCandidateExpense} />}
+      </React.Suspense>
+      {tab !== 'investing' && tab !== 'shopper' && tab !== 'tasks' && tab !== 'travel' && tab !== 'mail' && (
         <div style={{
-          textAlign:'center',
-          padding:'16px 16px 80px',
-          fontSize:9,
-          letterSpacing:'0.08em',
-          textTransform:'uppercase',
-          opacity:0.2,
-          fontFamily:MONO,
-          lineHeight:1.8,
+          textAlign: 'center',
+          padding: isWide ? '16px 16px 40px' : '16px 16px 80px',
+          fontSize: FS.lg, letterSpacing: '0.08em', opacity: 0.2,
+          fontFamily: MONO, lineHeight: 1.8,
         }}>
           <div>© {new Date().getFullYear()} By Roland Chu. All rights reserved.</div>
           <div>Last updated: {typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '—'} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''}</div>
         </div>
       )}
+    </>
+  );
 
-      {/* Bottom Nav */}
-      <div style={{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:480,background:'#fff',borderTop:'1px solid #eee',boxShadow:'0 -2px 10px rgba(0,0,0,0.04)',zIndex:40,display:'flex',fontFamily:MONO}}>
-        {[
-          {id:'home',icon:HomeIcon,label:'Home'},
-          {id:'stats',icon:BarChart3,label:'Stats'},
-          ...(can('investing') ? [{id:'investing',icon:TrendingUp,label:'Investing'}] : []),
-          ...(can('shopper')   ? [{id:'shopper',icon:()=><span style={{fontSize:16}}>🛍️</span>,label:'Shopper'}] : []),
-          {id:'settings',icon:SettingsIcon,label:'Settings'},
-        ].map(t=>(
-          <button key={t.id} onClick={()=>{setTab(t.id);setEditingId(null);}}
-            style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',padding:'10px 0 12px',border:'none',background:'none',cursor:'pointer',fontFamily:MONO,transition:'all 0.2s',color:'#1a1a1a',opacity:tab===t.id?1:0.25}}>
-            <t.icon size={20}/>
-            <span style={{fontSize:9,...s.upper,fontWeight:700,marginTop:2}}>{t.label}</span>
+  const investingPicker = showInvestingPicker && (
+    <React.Suspense fallback={null}>
+      <InvestingPickerLazy
+        config={effectiveNavConfig}
+        currentTab={tab}
+        currentInvestingView={investingView}
+        currentPortfolioView={investingPortfolioView}
+        currentSecuritiesView={investingSecuritiesView}
+        onNavigate={navigate}
+        onClose={() => setShowInvestingPicker(false)}
+        onOpenLayoutEditor={() => { setShowInvestingPicker(false); setShowLayoutEditor(true); }}
+        isWide={isWide}
+      />
+    </React.Suspense>
+  );
+
+  const layoutEditor = showLayoutEditor && (
+    <React.Suspense fallback={null}>
+      <NavLayoutEditorLazy
+        pool={navPool}
+        layout={normalizeNavLayout(navLayout, buildDefaultLayout(can), navPool)}
+        onSave={saveNavLayout}
+        onClose={() => setShowLayoutEditor(false)}
+        isWide={isWide}
+      />
+    </React.Suspense>
+  );
+
+  if (isWide) {
+    return (
+      <div className="se" style={{ display: 'flex', minHeight: '100vh', background: CLAY.bg }}>
+        <style>{THEME_CSS}</style>
+        {ToastEl}
+        {ConfirmModal}
+
+        {/* ── Sidebar ── */}
+        <div style={{
+          width: SIDEBAR_W, flexShrink: 0,
+          position: 'sticky', top: 0, alignSelf: 'flex-start', height: '100vh',
+          background: CLAY.surface,
+          borderRight: '1px solid rgba(188,165,144,0.13)',
+          boxShadow: '1px 0 16px rgba(0,0,0,0.04)',
+          display: 'flex', flexDirection: 'column',
+          fontFamily: MONO, padding: '20px 12px',
+          zIndex: 40,
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '4px 6px 20px',
+            borderBottom: '1px solid rgba(188,165,144,0.13)',
+            marginBottom: 12,
+          }}>
+            <img src="/icons/icon-192.png" alt="" style={{ width: 28, height: 28, borderRadius: 8 }} />
+            <span style={{ fontSize: FS.lg, fontWeight: FW.semibold, color: CLAY.text, letterSpacing: '-0.01em' }}>SplitEase</span>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 2 }}>
+            {navItems.map(t => <NavButton key={t.id} t={t} />)}
+          </div>
+          <button
+            onClick={() => setShowLayoutEditor(true)}
+            style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: 'none', cursor: 'pointer', fontFamily: MONO, borderRadius: 10, background: 'transparent', opacity: 0.4, color: CLAY.text, fontSize: FS.sm }}
+          >
+            <span>⠿</span>
+            <span>Customize</span>
           </button>
-        ))}
+        </div>
+
+        {/* ── Content ── */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {tabContent}
+        </div>
+
+        {investingPicker}
+        {layoutEditor}
       </div>
+    );
+  }
+
+  return (
+    <div className="se" style={{ ...s.page, maxWidth: 480, margin: '0 auto', position: 'relative' }}>
+      <style>{THEME_CSS}</style>
+      {ToastEl}
+      {ConfirmModal}
+
+      {tabContent}
+
+      {/* ── Bottom Nav ── */}
+      <div
+        style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, background: CLAY.surface, borderTop: 'none', boxShadow: '0 -8px 24px rgba(188,165,144,0.28), 0 -1px 0 rgba(188,165,144,0.18)', zIndex: 40, display: 'flex', gap: 2, fontFamily: MONO, padding: '6px 8px 14px', overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch' }}
+        onPointerDown={() => { navLongPressRef.current = setTimeout(() => setShowLayoutEditor(true), 650); }}
+        onPointerUp={() => clearTimeout(navLongPressRef.current)}
+        onPointerLeave={() => clearTimeout(navLongPressRef.current)}
+        onPointerCancel={() => clearTimeout(navLongPressRef.current)}
+      >
+        {navItems.map(t => <NavButton key={t.id} t={t} />)}
+      </div>
+
+      {investingPicker}
+      {layoutEditor}
     </div>
   );
 }

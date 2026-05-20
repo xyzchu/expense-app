@@ -11,10 +11,20 @@ node_modules
 dist
 dist-ssr
 *.local
+.local_state
+__pycache__/
+*.pyc
+backup/
+*.png
+*.log.*
+scripts/.local_appdata/
+.claude/
+.opencode-context.md
+home-prototype.html
+supabase/.temp/
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+.vscode/
 .idea
 .DS_Store
 *.suo

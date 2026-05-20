@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-
-const MONO = '"IBM Plex Mono", monospace';
+import { MONO, FS, FW, CLAY } from './theme';
+import {
+  UI,
+  UnifiedDataTable,
+} from './ui';
 const DEFAULT_START_MONTH = '2025-08';
 const TOTAL_BANK = 'TOTAL';
 const ALL_STOCKS = 'ALL_STOCKS';
@@ -16,7 +19,7 @@ const fmtSigned = (value, dec = 0) =>
     ? '—'
     : `${Number(value) >= 0 ? '+' : '-'}${fmt(Math.abs(Number(value)), dec)}`;
 
-const fmtPct = (value, dec = 1) =>
+const fmtPct = (value, dec = 2) =>
   value == null || Number.isNaN(Number(value))
     ? '—'
     : `${Number(value) >= 0 ? '+' : '-'}${Math.abs(Number(value)).toFixed(dec)}%`;
@@ -160,29 +163,26 @@ export default function SecuritiesStatisticsTab({ user, sb, showToast }) {
   const [stockFilter, setStockFilter] = useState(ALL_STOCKS);
   const [lastRefreshedAt, setLastRefreshedAt] = useState('');
   const [futuPriceMode, setFutuPriceMode] = useState('live');
-  const tableScrollRef = useRef(null);
+  const [statsSort, setStatsSort] = useState({ key: 'snapshot_date', direction: 'desc' });
 
   const s = {
-    card: { background: '#fff', borderRadius: 12, padding: '12px 14px', boxShadow: '0 1px 3px rgba(0,0,0,0.07)', marginBottom: 10 },
-    label: { fontSize: 10, fontFamily: MONO, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#9ca3af' },
+    card: { background: CLAY.surface, borderRadius: UI.cardRadius, padding: '12px 14px', boxShadow: CLAY.shadow, marginBottom: UI.sectionGap },
+    label: { fontSize: FS.lg, fontFamily: MONO, letterSpacing: '0.08em', color: CLAY.textMid, fontWeight: FW.semibold },
     btn: (active = false) => ({
       border: 'none',
-      borderRadius: 8,
+      borderRadius: UI.controlRadius,
       padding: '8px 12px',
       cursor: 'pointer',
       fontFamily: MONO,
-      fontSize: 12,
+      fontSize: FS.lg,
       letterSpacing: '0.04em',
-      background: active ? '#1a1a1a' : '#f0f0ea',
-      color: active ? '#fff' : '#1a1a1a',
+      background: active ? CLAY.text : CLAY.surf2,
+      color: active ? CLAY.surface : CLAY.textMid,
+      boxShadow: active ? UI.activeShadow : CLAY.btn,
+      fontWeight: active ? FW.semibold : FW.normal,
     }),
   };
   const isAllStocksView = stockFilter === ALL_STOCKS;
-
-  const scrollTable = (direction) => {
-    if (!tableScrollRef.current) return;
-    tableScrollRef.current.scrollBy({ left: direction * 220, behavior: 'smooth' });
-  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -341,6 +341,26 @@ export default function SecuritiesStatisticsTab({ user, sb, showToast }) {
       .sort((a, b) => String(b.snapshot_date || '').localeCompare(String(a.snapshot_date || '')));
   }, [monthlyQuoteMaps, monthlyQuotes, currentQuoteMap, transactions, bankFilter, stockFilter]);
 
+  const toggleStatsSort = (key) => {
+    setStatsSort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === 'desc' ? 'asc' : 'desc' }
+        : { key, direction: key === 'snapshot_date' ? 'desc' : 'asc' }
+    );
+  };
+
+  const sortedMonthlyTableRows = useMemo(() => {
+    const direction = statsSort.direction === 'desc' ? -1 : 1;
+    return monthlyTableRows.slice().sort((a, b) => {
+      const av = statsSort.key === 'month' ? a.snapshot_date : a[statsSort.key];
+      const bv = statsSort.key === 'month' ? b.snapshot_date : b[statsSort.key];
+      if (typeof av === 'number' || typeof bv === 'number') {
+        return (Number(av || 0) - Number(bv || 0)) * direction;
+      }
+      return String(av || '').localeCompare(String(bv || '')) * direction;
+    });
+  }, [monthlyTableRows, statsSort]);
+
   const latestRequest = requestRows[0] || null;
   const requestMeta = (() => {
     if (!latestRequest) return lastRefreshedAt ? `Last updated ${new Date(lastRefreshedAt).toLocaleString()}` : 'Not refreshed yet';
@@ -382,19 +402,111 @@ export default function SecuritiesStatisticsTab({ user, sb, showToast }) {
     await loadAll();
   };
 
+  const statisticsColumns = [
+    {
+      key: 'snapshot_date',
+      top: 'Month',
+      sticky: true,
+      width: 98,
+      min: 86,
+      maxVw: 25,
+      emphasis: true,
+      render: (row) => <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.15 }}>{monthLabel(row)}</div>,
+    },
+    {
+      key: 'unrealized_pnl',
+      top: 'Unrealised',
+      bottom: '%',
+      width: 92,
+      min: 80,
+      maxVw: 24,
+      render: (row) => {
+        const color = (row.unrealized_pnl || 0) >= 0 ? CLAY.green : CLAY.red;
+        return (
+          <>
+            <div style={{ fontWeight: 700, color, lineHeight: 1.1, fontSize: FS.lg }}>{fmtSigned(row.unrealized_pnl, 0)}</div>
+            <div style={{ marginTop: 2, fontSize: FS.lg, color, lineHeight: 1.1 }}>{fmtPct(row.unrealizedPct, 2)}</div>
+          </>
+        );
+      },
+    },
+    {
+      key: 'realized_pnl',
+      top: 'Realised',
+      width: 78,
+      min: 70,
+      maxVw: 20,
+      render: (row) => <div style={{ fontWeight: 700, color: (row.realized_pnl || 0) >= 0 ? CLAY.green : CLAY.red, lineHeight: 1.1, fontSize: FS.lg }}>{fmtSigned(row.realized_pnl, 0)}</div>,
+    },
+    {
+      key: 'dividends',
+      top: 'Dividend',
+      width: 80,
+      min: 70,
+      maxVw: 20,
+      render: (row) => <div style={{ fontWeight: 700, color: (row.dividends || 0) >= 0 ? CLAY.green : CLAY.red, lineHeight: 1.1, fontSize: FS.lg }}>{fmtSigned(row.dividends, 0)}</div>,
+    },
+    {
+      key: 'total_pnl',
+      top: 'Total P&L',
+      bottom: isAllStocksView ? '%' : '',
+      width: 86,
+      min: 76,
+      maxVw: 22,
+      render: (row) => {
+        const color = (row.total_pnl || 0) >= 0 ? CLAY.green : CLAY.red;
+        return (
+          <>
+            <div style={{ fontWeight: 700, color, lineHeight: 1.1, fontSize: FS.lg }}>{fmtSigned(row.total_pnl, 0)}</div>
+            {isAllStocksView && <div style={{ marginTop: 2, fontSize: FS.lg, color, lineHeight: 1.1 }}>{fmtPct(row.totalPnlPct, 2)}</div>}
+          </>
+        );
+      },
+    },
+    ...(isAllStocksView ? [{
+      key: 'cash_invested',
+      top: 'Cash',
+      bottom: 'Invested',
+      width: 88,
+      min: 78,
+      maxVw: 22,
+      render: (row) => <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.1, fontSize: FS.lg }}>{fmtSigned(row.cash_invested, 0)}</div>,
+    }] : []),
+    {
+      key: 'market_value',
+      top: 'Market',
+      bottom: 'Value',
+      width: 84,
+      min: 74,
+      maxVw: 22,
+      render: (row) => <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.1, fontSize: FS.lg }}>{fmt(row.market_value, 0)}</div>,
+    },
+    {
+      key: 'cost_basis',
+      top: 'Cost',
+      bottom: 'Basis',
+      width: 76,
+      min: 68,
+      maxVw: 20,
+      render: (row) => <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.1, fontSize: FS.lg }}>{fmt(row.cost_basis, 0)}</div>,
+    },
+  ];
+
+  const statisticsFooter = (
+    <div style={{ fontSize: FS.lg, lineHeight: 1.55, color: CLAY.textMid }}>
+      <div>Unrealised % = Unrealised P&amp;L / Cost Basis</div>
+      {isAllStocksView && (
+        <>
+          <div>Cash Invested = Accumulated Deposit - Withdrawal</div>
+          <div>Total P&amp;L % = (Unrealised P&amp;L + Realised P&amp;L + Dividend) / Cash Invested</div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ padding: '8px 16px 140px', fontFamily: MONO }}>
       <div style={{ ...s.card, paddingBottom: 10 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <div style={{ ...s.label }}>Securities Statistics</div>
-          <button onClick={handleRefresh} style={{ ...s.btn(false), minWidth: 0 }} disabled={refreshing}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <RefreshCw size={12} />
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </span>
-          </button>
-        </div>
-        <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10 }}>{requestMeta}</div>
         <div style={{ ...s.label, marginBottom: 6 }}>Accounts</div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {bankOptions.map((bank) => (
@@ -413,143 +525,19 @@ export default function SecuritiesStatisticsTab({ user, sb, showToast }) {
         </div>
       </div>
 
-      {loading ? (
-        <div style={{ ...s.card, fontSize: 12, opacity: 0.45 }}>Loading…</div>
-      ) : monthlyTableRows.length === 0 ? (
-        <div style={{ ...s.card, fontSize: 12, opacity: 0.45, lineHeight: 1.6 }}>
-          Refresh statistics to pull month-end securities prices from Futu and save monthly comparison rows.
-        </div>
-      ) : (
-        <div style={{ ...s.card, padding: 0, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 12px 0' }}>
-            <button onClick={() => scrollTable(-1)} style={{ ...s.btn(false), padding: '5px 10px', minWidth: 0 }}>
-              ←
-            </button>
-            <button onClick={() => scrollTable(1)} style={{ ...s.btn(false), padding: '5px 10px', minWidth: 0 }}>
-              →
-            </button>
-          </div>
-          <div ref={tableScrollRef} style={{ overflowX: 'auto', paddingTop: 8 }}>
-            <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: 'max-content', tableLayout: 'fixed' }}>
-              <colgroup>
-                <col style={{ width: 66 }} />
-                <col style={{ width: 52 }} />
-                <col style={{ width: 48 }} />
-                <col style={{ width: 48 }} />
-                <col style={{ width: 48 }} />
-                {isAllStocksView && <col style={{ width: 54 }} />}
-                <col style={{ width: 52 }} />
-                <col style={{ width: 50 }} />
-              </colgroup>
-              <thead>
-                <tr style={{ background: '#fafaf8' }}>
-                  {[
-                    { top: 'Month', bottom: '', key: 'month' },
-                    { top: 'Unrealised', bottom: '%', key: 'unrealized_pnl' },
-                    { top: 'Realised', bottom: '', key: 'realized_pnl' },
-                    { top: 'Dividend', bottom: '', key: 'dividends' },
-                    { top: 'Total P&L', bottom: isAllStocksView ? '%' : '', key: 'total_pnl' },
-                    ...(isAllStocksView ? [{ top: 'Cash', bottom: 'Invested', key: 'cash_invested' }] : []),
-                    { top: 'Market', bottom: 'Value', key: 'market_value' },
-                    { top: 'Cost', bottom: 'Basis', key: 'cost_basis' },
-                  ].map((label, index) => (
-                    <th
-                      key={label.key}
-                      style={{
-                        ...s.label,
-                        textAlign: 'left',
-                        padding: '5px 4px',
-                        borderBottom: '1px solid #ece7df',
-                        fontSize: 10,
-                        lineHeight: 1.2,
-                        opacity: 1,
-                        color: '#111827',
-                        position: index === 0 ? 'sticky' : 'static',
-                        left: index === 0 ? 0 : 'auto',
-                        zIndex: index === 0 ? 3 : 1,
-                        background: '#fafaf8',
-                      }}
-                    >
-                      <div style={{ display: 'grid', gap: 2, width: '100%' }}>
-                        {label.bottom ? (
-                          <>
-                            <div>{label.top}</div>
-                            <div style={{ height: 1, background: '#d6d3d1', width: '100%' }} />
-                            <div>{label.bottom}</div>
-                          </>
-                        ) : (
-                          <div>{label.top}</div>
-                        )}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyTableRows.map((row) => {
-                  const unrealizedColor = (row.unrealized_pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-                  const realizedColor = (row.realized_pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-                  const dividendColor = (row.dividends || 0) >= 0 ? '#16a34a' : '#dc2626';
-                  const totalColor = (row.total_pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-                  return (
-                    <tr key={`${bankFilter}-${stockFilter}-${row.snapshot_date}`} style={{ borderBottom: '1px solid #f1ede5' }}>
-                      <td
-                        style={{
-                          padding: '5px 4px',
-                          verticalAlign: 'middle',
-                          position: 'sticky',
-                          left: 0,
-                          background: '#fff',
-                          zIndex: 2,
-                          boxShadow: '8px 0 14px -12px rgba(15,23,42,0.22)',
-                        }}
-                      >
-                        <div style={{ fontWeight: 700, fontSize: 10, lineHeight: 1.15 }}>{monthLabel(row)}</div>
-                      </td>
-                      <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 700, color: unrealizedColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.unrealized_pnl, 0)}</div>
-                        <div style={{ marginTop: 2, fontSize: 10, color: unrealizedColor, lineHeight: 1.1 }}>{fmtPct(row.unrealizedPct, 2)}</div>
-                      </td>
-                      <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 700, color: realizedColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.realized_pnl, 0)}</div>
-                      </td>
-                      <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 700, color: dividendColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.dividends, 0)}</div>
-                      </td>
-                      <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 700, color: totalColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.total_pnl, 0)}</div>
-                        {isAllStocksView && (
-                          <div style={{ marginTop: 2, fontSize: 10, color: totalColor, lineHeight: 1.1 }}>{fmtPct(row.totalPnlPct, 2)}</div>
-                        )}
-                      </td>
-                      {isAllStocksView && (
-                        <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                          <div style={{ fontWeight: 700, color: '#111827', lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.cash_invested, 0)}</div>
-                        </td>
-                      )}
-                      <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 700, color: '#111827', lineHeight: 1.1, fontSize: 10 }}>{fmt(row.market_value, 0)}</div>
-                      </td>
-                      <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 700, color: '#111827', lineHeight: 1.1, fontSize: 10 }}>{fmt(row.cost_basis, 0)}</div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ padding: '10px 12px 12px', borderTop: '1px solid #f1ede5', fontSize: 10, lineHeight: 1.55, color: '#6b7280' }}>
-            <div>Unrealised % = Unrealised P&amp;L / Cost Basis</div>
-            {isAllStocksView && (
-              <>
-                <div>Cash Invested = Accumulated Deposit - Withdrawal</div>
-                <div>Total P&amp;L % = (Unrealised P&amp;L + Realised P&amp;L + Dividend) / Cash Invested</div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <UnifiedDataTable
+        title="Statistics"
+        subtitle={`${monthlyTableRows.length} month${monthlyTableRows.length === 1 ? '' : 's'} · ${bankFilter === TOTAL_BANK ? 'All accounts' : bankFilter} · ${stockFilter === ALL_STOCKS ? 'All stocks' : stockFilter}`}
+        columns={statisticsColumns}
+        rows={sortedMonthlyTableRows}
+        rowKey={(row) => `${bankFilter}-${stockFilter}-${row.snapshot_date}`}
+        sort={statsSort}
+        onSort={toggleStatsSort}
+        loading={loading}
+        empty="Refresh statistics to pull month-end securities prices from Futu and save monthly comparison rows."
+        footer={statisticsFooter}
+        onSettings={() => showToast?.('Table settings coming soon')}
+      />
     </div>
   );
 }

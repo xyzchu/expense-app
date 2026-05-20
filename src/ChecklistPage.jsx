@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { Download } from 'lucide-react';
+import { MONO, FS, FW, CLAY } from './theme';
 
-const MONO = '"IBM Plex Mono", monospace';
 const sq = s => ({ fontFamily: MONO, ...s });
 const inputBase = {
-  fontFamily: MONO, fontSize: 16,
-  border: '1px solid #e5e7eb', borderRadius: 8,
-  padding: '6px 10px', outline: 'none',
-  background: '#fafafa', color: '#1a1a1a', width: '100%',
+  fontFamily: MONO, fontSize: FS.lg,
+  border: 'none', borderRadius: 8,
+  boxShadow: CLAY.inset, padding: '6px 10px', outline: 'none',
+  background: CLAY.surface, color: CLAY.text, width: '100%',
 };
 
 function load(key, fallback) {
@@ -18,22 +17,28 @@ function save(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
 }
 
-export default function ChecklistPage({ storageKey, title, subtitle, filename, items }) {
+export default function ChecklistPage({ storageKey, title, subtitle, filename, items, onExport }) {
   const dataItems = items.filter(i => !i.section);
 
-  const [values, setValues] = useState(() =>
-    load(`${storageKey}_values`, Object.fromEntries(dataItems.map(i => [i.id, ''])))
+  const [notes, setNotes] = useState(() =>
+    load(`${storageKey}_notes`, Object.fromEntries(dataItems.map(i => [i.id, ''])))
+  );
+  const [responses, setResponses] = useState(() =>
+    load(`${storageKey}_responses`, Object.fromEntries(dataItems.map(i => [i.id, ''])))
   );
   const [hidden, setHidden] = useState(() =>
     load(`${storageKey}_hidden`, Object.fromEntries(dataItems.map(i => [i.id, false])))
   );
-  const [visitDate, setVisitDate] = useState(() =>
-    localStorage.getItem(`${storageKey}_date`) || new Date().toISOString().slice(0, 10)
-  );
 
-  const setVal = (id, val) => setValues(v => {
+  const setNote = (id, val) => setNotes(v => {
     const next = { ...v, [id]: val };
-    save(`${storageKey}_values`, next);
+    save(`${storageKey}_notes`, next);
+    return next;
+  });
+
+  const setResponse = (id, val) => setResponses(r => {
+    const next = { ...r, [id]: val };
+    save(`${storageKey}_responses`, next);
     return next;
   });
 
@@ -44,19 +49,18 @@ export default function ChecklistPage({ storageKey, title, subtitle, filename, i
   });
 
   const tick = (id) => {
-    if (!values[id] || values[id].toLowerCase() === 'no') setVal(id, 'yes');
+    setResponse(id, 'yes');
     setHid(id, true);
   };
 
   const cross = (id) => {
-    if (!values[id] || values[id].toLowerCase() === 'yes') setVal(id, 'No');
+    setResponse(id, 'no');
     setHid(id, true);
   };
 
-  const exportTxt = () => {
+  const exportTxt = React.useCallback(() => {
     const lines = [
-      `${title.toUpperCase()} VISIT REPORT`,
-      `Date: ${visitDate}`,
+      `${title.toUpperCase()}`,
       `Exported: ${new Date().toLocaleString()}`,
       '', '─'.repeat(40), '',
     ];
@@ -67,40 +71,34 @@ export default function ChecklistPage({ storageKey, title, subtitle, filename, i
         return;
       }
       num += 1;
+      const resp = responses[item.id] || '—';
+      const note = notes[item.id] || '';
       lines.push(`${String(num).padStart(2, '0')}. ${item.label}`);
-      lines.push(`    ${values[item.id] || '—'}`);
+      lines.push(`    Response: ${resp}`);
+      if (note) lines.push(`    Note: ${note}`);
       lines.push('');
     });
     const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `${filename}-${visitDate}.txt`; a.click();
+    a.href = url; a.download = `${filename}.txt`; a.click();
     URL.revokeObjectURL(url);
-  };
+  }, [title, filename, items, responses, notes]);
+
+  React.useEffect(() => { if (onExport) onExport(exportTxt); }, [exportTxt]);
 
   let num = 0;
 
   return (
     <div style={sq({ paddingBottom: 100 })}>
-      <div style={{ padding: '20px 16px 8px' }}>
-        <div style={sq({ fontSize: 18, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#1a1a1a' })}>{title}</div>
-        <div style={sq({ fontSize: 11, opacity: 0.4, marginTop: 2 })}>{subtitle}</div>
-      </div>
-
-      <div style={{ padding: '0 16px 16px' }}>
-        <label style={sq({ fontSize: 10, textTransform: 'uppercase', opacity: 0.4, display: 'block', marginBottom: 4 })}>Visit Date</label>
-        <input type="date" value={visitDate}
-          onChange={e => { setVisitDate(e.target.value); localStorage.setItem(`${storageKey}_date`, e.target.value); }}
-          style={{ ...inputBase, width: 'auto' }} />
-      </div>
 
       <div style={{ padding: '0 16px' }}>
         {items.map(item => {
           if (item.section) {
             return (
               <div key={item.id} style={sq({
-                fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em',
-                opacity: 0.45, marginTop: 6, marginBottom: 6, paddingLeft: 2,
+                fontSize: FS.lg, letterSpacing: '0.08em',
+                color: CLAY.textMid, fontWeight: FW.semibold, marginTop: 6, marginBottom: 6, paddingLeft: 2,
               })}>
                 {item.label}
               </div>
@@ -110,61 +108,70 @@ export default function ChecklistPage({ storageKey, title, subtitle, filename, i
           num += 1;
           const n = num;
           const isHidden = hidden[item.id];
+          const resp = responses[item.id] || '';
+          const note = notes[item.id] || '';
 
           if (isHidden) {
             return (
               <div key={item.id}
                 onClick={() => setHid(item.id, false)}
                 style={{
-                  background: '#f9fafb', border: '1px solid #f0f0f0', borderRadius: 12,
+                  background: CLAY.surf2, border: 'none', boxShadow: CLAY.inset, borderRadius: 12,
                   padding: '10px 14px', marginBottom: 10, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', gap: 10,
                 }}>
-                <span style={sq({ fontSize: 10, opacity: 0.25, flexShrink: 0 })}>{String(n).padStart(2, '0')}</span>
-                <span style={sq({ fontSize: 13, color: '#9ca3af', flex: 1, textDecoration: 'line-through' })}>{item.label}</span>
-                <span style={sq({ fontSize: 11, color: '#22c55e', flexShrink: 0 })}>
-                  {values[item.id] ? values[item.id] : '✓'}
-                </span>
+                <span style={sq({ fontSize: FS.lg, color: CLAY.textLt, flexShrink: 0 })}>{String(n).padStart(2, '0')}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={sq({ fontSize: FS.lg, color: CLAY.textLt, textDecoration: 'line-through' })}>{item.label}</div>
+                  {note ? <div style={sq({ fontSize: FS.lg, color: CLAY.textMid, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{note}</div> : null}
+                </div>
+                {resp && (
+                  <span style={sq({
+                    fontSize: FS.lg, fontWeight: FW.semibold, flexShrink: 0,
+                    padding: '2px 8px', borderRadius: 6,
+                    background: resp === 'yes' ? `${CLAY.green}20` : `${CLAY.red}18`,
+                    color: resp === 'yes' ? CLAY.green : CLAY.red,
+                  })}>
+                    {resp === 'yes' ? 'Yes' : 'No'}
+                  </span>
+                )}
               </div>
             );
           }
 
           return (
             <div key={item.id} style={{
-              background: '#fff', border: '1px solid #f0f0f0', borderRadius: 12,
+              background: CLAY.surface, border: 'none', boxShadow: CLAY.shadowSm, borderRadius: 12,
               padding: '12px 14px', marginBottom: 10,
             }}>
-              <div style={sq({ fontSize: 13, color: '#1a1a1a', marginBottom: 8 })}>
-                <span style={{ opacity: 0.3, fontSize: 10, marginRight: 6 }}>{String(n).padStart(2, '0')}</span>
+              <div style={sq({ fontSize: FS.lg, color: CLAY.text, marginBottom: 8 })}>
+                <span style={{ color: CLAY.textLt, fontSize: FS.lg, marginRight: 6 }}>{String(n).padStart(2, '0')}</span>
                 {item.label}
               </div>
-              <input type="text" value={values[item.id]} onChange={e => setVal(item.id, e.target.value)}
+              <input type="text" value={note} onChange={e => setNote(item.id, e.target.value)}
+                placeholder="Note…"
                 style={{ ...inputBase, marginBottom: 8 }} />
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => tick(item.id)} style={sq({
-                  flex: 1, padding: '6px', borderRadius: 8, border: '1px solid #bbf7d0',
-                  background: '#f0fdf4', color: '#15803d', fontSize: 14, cursor: 'pointer',
-                })}>✓</button>
+                  flex: 1, padding: '6px', borderRadius: 8, border: 'none',
+                  background: resp === 'yes' ? CLAY.sage : CLAY.surf2,
+                  color: resp === 'yes' ? CLAY.sageDk : CLAY.textMid,
+                  fontSize: FS.lg, cursor: 'pointer',
+                  boxShadow: CLAY.btn, fontWeight: FW.semibold,
+                })}>✓ Yes</button>
                 <button onClick={() => cross(item.id)} style={sq({
-                  flex: 1, padding: '6px', borderRadius: 8, border: '1px solid #fecaca',
-                  background: '#fef2f2', color: '#b91c1c', fontSize: 14, cursor: 'pointer',
-                })}>✗</button>
+                  flex: 1, padding: '6px', borderRadius: 8, border: 'none',
+                  background: resp === 'no' ? `${CLAY.red}28` : CLAY.surf2,
+                  color: resp === 'no' ? CLAY.red : CLAY.textMid,
+                  fontSize: FS.lg, cursor: 'pointer',
+                  boxShadow: CLAY.btn, fontWeight: FW.semibold,
+                })}>✗ No</button>
               </div>
             </div>
           );
         })}
       </div>
 
-      <div style={{ padding: '0 16px 20px' }}>
-        <button onClick={exportTxt} style={sq({
-          width: '100%', padding: '14px', background: '#1a1a1a', color: '#fff',
-          border: 'none', borderRadius: 12, fontSize: 13, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 8, letterSpacing: '0.05em', textTransform: 'uppercase',
-        })}>
-          <Download size={15} /> Export as Text File
-        </button>
-      </div>
     </div>
   );
 }

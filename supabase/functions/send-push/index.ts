@@ -200,6 +200,9 @@ serve(async (req) => {
     const { list_id, sender_user_id, title, body, tag, target_user_id } = await req.json();
 
     const authHeader = req.headers.get('Authorization');
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const bearerToken = authHeader?.replace(/^Bearer\s+/i, '') || '';
+    const isServiceRoleCall = bearerToken === serviceRoleKey;
     const authedClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -209,42 +212,57 @@ serve(async (req) => {
         },
       }
     );
-    const {
-      data: { user },
-      error: userError,
-    } = await authedClient.auth.getUser();
+    if (!isServiceRoleCall) {
+      const {
+        data: { user },
+        error: userError,
+      } = await authedClient.auth.getUser();
 
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+      if (userError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-    const { data: membership } = await authedClient
-      .from('list_members')
-      .select('list_id')
-      .eq('list_id', list_id)
-      .eq('user_id', user.id)
-      .maybeSingle();
+      if (!list_id) {
+        return new Response(JSON.stringify({ error: 'list_id is required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-    if (!membership) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      const { data: membership } = await authedClient
+        .from('list_members')
+        .select('list_id')
+        .eq('list_id', list_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!membership) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      serviceRoleKey
     );
+
+    if (!list_id && !target_user_id) {
+      return new Response(JSON.stringify({ error: 'list_id or target_user_id is required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     let query = supabase
       .from('push_subscriptions')
-      .select('subscription')
-      .eq('list_id', list_id);
-    // If target_user_id is set, only notify that specific user
+      .select('id,user_id,subscription');
+    if (list_id) query = query.eq('list_id', list_id);
     if (target_user_id) query = query.eq('user_id', target_user_id);
     const { data: subs } = await query;
 
@@ -258,26 +276,62 @@ serve(async (req) => {
     const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY')!;
     const vapidEmail = Deno.env.get('VAPID_EMAIL')!;
     const payload = JSON.stringify({ title, body, tag, url: '/' });
+    const preferenceKey =
+      tag === 'news' || tag === 'stock-news' ? 'news' :
+      tag === 'pnl' ? 'pnl' :
+      tag === 'settlement' || tag === 'settlements' ? 'settlement' :
+      tag === 'ai' || tag === 'ai-response' ? 'ai' :
+      tag === 'test' ? 'test' :
+      'expense';
+
+    const userIds = [...new Set(subs.map((sub) => sub.user_id).filter(Boolean))];
+    const { data: prefRows } = userIds.length > 0
+      ? await supabase
+        .from('user_settings')
+        .select('user_id,value')
+        .eq('key', 'notification_preferences')
+        .in('user_id', userIds)
+      : { data: [] };
+    const prefsByUser = new Map<string, Record<string, boolean>>();
+    for (const row of prefRows || []) {
+      try {
+        const parsed = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+        prefsByUser.set(row.user_id, parsed || {});
+      } catch {
+        prefsByUser.set(row.user_id, {});
+      }
+    }
+
+    const seenEndpoints = new Set<string>();
+    const eligibleSubs = subs.filter((sub) => {
+      const subscription = sub.subscription;
+      if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return false;
+      if (seenEndpoints.has(subscription.endpoint)) return false;
+      seenEndpoints.add(subscription.endpoint);
+      if (preferenceKey === 'test') return true;
+      const prefs = prefsByUser.get(sub.user_id) || {};
+      return prefs[preferenceKey] !== false;
+    });
 
     const results = await Promise.allSettled(
-      subs.map(({ subscription }) =>
+      eligibleSubs.map(({ subscription }) =>
         sendWebPush(subscription, payload, vapidPublicKey, vapidPrivateKey, vapidEmail)
       )
     );
 
     // Remove expired/invalid subscriptions (410 Gone)
-    const expired = subs
+    const expired = eligibleSubs
       .filter((_, i) => {
         const r = results[i];
-        return r.status === 'rejected' && r.reason?.message?.includes('410');
+        return r.status === 'rejected' && (r.reason?.message?.includes('410') || r.reason?.message?.includes('404'));
       })
-      .map((_, i) => subs[i]);
+      .map((sub) => sub.id);
 
     if (expired.length > 0) {
       await supabase
         .from('push_subscriptions')
         .delete()
-        .in('subscription', expired.map((s) => s.subscription));
+        .in('id', expired);
     }
 
     const sent = results.filter((r) => r.status === 'fulfilled').length;

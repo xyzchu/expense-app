@@ -1,11 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Upload, RefreshCw, X, Download } from 'lucide-react';
+import { Plus, Upload, RefreshCw, X, Download, Settings } from 'lucide-react';
 
-const MONO = '"IBM Plex Mono", monospace';
+import { MONO, FS, FW, CLAY } from './theme';
+import {
+  DataTableCard,
+  DataTableHeaderLabel,
+  UI,
+  UnifiedDataTable,
+  tableCellStyle,
+  tableColumnStyle,
+  tableHeaderCellStyle,
+  tableHeaderRowStyle,
+  tableRowStyle,
+  tableStyle,
+} from './ui';
 const TYPE_ORDER = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'OTHER'];
 const CASH_TYPES = new Set(['DEPOSIT', 'WITHDRAWAL']);
 const SECURITY_TYPES = new Set(['BUY', 'SELL', 'DIVIDEND']);
 const FUTU_BRIDGE_URL = 'http://127.0.0.1:8765';
+const FUTU_PNL_TIME_ZONE = 'America/New_York';
+const FUTU_PNL_TIME_ZONE_LABEL = 'US/Eastern';
+const LOCAL_REFERENCE_TIME_ZONE = 'Australia/Brisbane';
+const LOCAL_REFERENCE_TIME_ZONE_LABEL = 'Brisbane';
 const FUTU_PRICE_MODE_META = {
   live: { label: 'last prices', source: 'Futu last price' },
   market_close: { label: 'market close prices', source: 'Futu market close' },
@@ -19,6 +35,17 @@ const FUTU_REQUEST_TYPES = {
   summary: 'summary',
   fullSync: 'full_sync',
 };
+const PNL_SORT_OPTIONS = [
+  { key: 'portfolioPct', label: 'Portfolio %' },
+  { key: 'marketValue', label: 'Market value' },
+  { key: 'ticker', label: 'Stock' },
+  { key: 'currentPrice', label: 'Price' },
+  { key: 'unrealizedPnl', label: 'Unrealised P&L' },
+  { key: 'realizedPnl', label: 'Realised P&L' },
+  { key: 'totalPnl', label: 'Total P&L' },
+  { key: 'dividends', label: 'Dividend' },
+  { key: 'investedCost', label: 'Cost basis' },
+];
 
 const TYPE_COLORS = {
   BUY: { bg: '#dcfce7', text: '#16a34a' },
@@ -51,15 +78,80 @@ const fmt = (v, dec = 2) =>
     ? '—'
     : Number(v).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
-const fmtSigned = (v, dec = 2) =>
+const roundsToZero = (v, dec = 0) => Math.abs(Number(v) || 0) < (0.5 / Math.pow(10, dec));
+
+const fmtSigned = (v, dec = 0) =>
   v == null || Number.isNaN(Number(v))
     ? '—'
+    : roundsToZero(v, dec)
+    ? fmt(0, dec)
     : `${Number(v) >= 0 ? '+' : '-'}${fmt(Math.abs(Number(v)), dec)}`;
 
 const fmtPct = (v, dec = 2) =>
   v == null || Number.isNaN(Number(v))
     ? '—'
+    : roundsToZero(v, dec)
+    ? `${fmt(0, dec)}%`
     : `${Number(v) >= 0 ? '+' : '-'}${fmt(Math.abs(Number(v)), dec)}%`;
+
+const fmtInputPrice = (v) =>
+  v == null || Number.isNaN(Number(v))
+    ? ''
+    : Number(v).toFixed(2);
+
+const isoDate = (date = new Date()) => {
+  const local = new Date(date);
+  local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
+  return local.toISOString().slice(0, 10);
+};
+const padTimePart = (value) => String(value).padStart(2, '0');
+const zonedParts = (date, timeZone) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour') % 24,
+    minute: get('minute'),
+  };
+};
+const zonedIsoDate = (date = new Date(), timeZone = FUTU_PNL_TIME_ZONE) => {
+  const parts = zonedParts(date, timeZone);
+  return `${parts.year}-${padTimePart(parts.month)}-${padTimePart(parts.day)}`;
+};
+const wallClockDeltaMinutes = (fromTimeZone, toTimeZone, date = new Date()) => {
+  const from = zonedParts(date, fromTimeZone);
+  const to = zonedParts(date, toTimeZone);
+  const fromUtc = Date.UTC(from.year, from.month - 1, from.day, from.hour, from.minute);
+  const toUtc = Date.UTC(to.year, to.month - 1, to.day, to.hour, to.minute);
+  return Math.round((toUtc - fromUtc) / 60000);
+};
+const describeFutuPnlRefreshTime = (time) => {
+  if (!/^\d{2}:\d{2}$/.test(String(time || ''))) return '';
+  const [hour, minute] = time.split(':').map(Number);
+  const total = hour * 60 + minute + wallClockDeltaMinutes(FUTU_PNL_TIME_ZONE, LOCAL_REFERENCE_TIME_ZONE);
+  const dayOffset = Math.floor(total / 1440);
+  const localMinutes = ((total % 1440) + 1440) % 1440;
+  const localTime = `${padTimePart(Math.floor(localMinutes / 60))}:${padTimePart(localMinutes % 60)}`;
+  const dayText = dayOffset > 0 ? ' next day' : dayOffset < 0 ? ' previous day' : '';
+  return `${time} ${FUTU_PNL_TIME_ZONE_LABEL} = ${localTime} ${LOCAL_REFERENCE_TIME_ZONE_LABEL}${dayText}`;
+};
+const monthKeyFromDate = (value) => String(value || '').slice(0, 7);
+const previousMonthKey = (monthKey) => {
+  const [year, month] = String(monthKey || '').split('-').map(Number);
+  if (!year || !month) return '';
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+};
+const previousYearEndMonthKey = (dateStr) => `${Number(String(dateStr || isoDate()).slice(0, 4)) - 1}-12`;
 
 const adjustedQtyFromRow = (row) => Number(row.quantity || 0);
 const originalQtyFromRow = (row) => Number(row.original_quantity ?? row.quantity ?? 0);
@@ -84,6 +176,74 @@ function compareTxnOrder(a, b) {
   if (byCreated !== 0) return byCreated;
 
   return String(a.id || '').localeCompare(String(b.id || ''));
+}
+
+function buildTotalPnlSnapshot(transactions, snapshotDate, quoteMap) {
+  if (!snapshotDate || !quoteMap) return null;
+  const securityTxns = transactions
+    .filter((txn) => txn.ticker && SECURITY_TYPES.has(txn.type))
+    .filter((txn) => String(txn.transaction_date || '') <= snapshotDate)
+    .slice()
+    .sort(compareTxnOrder);
+
+  const positions = new Map();
+  for (const txn of securityTxns) {
+    const ticker = String(txn.ticker || '').trim().toUpperCase();
+    if (!positions.has(ticker)) {
+      positions.set(ticker, { shares: 0, avgCost: 0, realizedPnl: 0, dividends: 0 });
+    }
+    const row = positions.get(ticker);
+    const qty = Number(txn.quantity || 0);
+    const amount = Number(txn.amount || 0);
+    if (txn.type === 'BUY' && qty > 0) {
+      const currentCost = row.shares * row.avgCost;
+      row.shares += qty;
+      row.avgCost = row.shares > 0 ? (currentCost + amount) / row.shares : 0;
+    } else if (txn.type === 'SELL' && qty > 0) {
+      const costBasis = row.avgCost * qty;
+      row.realizedPnl += amount - costBasis;
+      row.shares = Math.max(0, row.shares - qty);
+      if (row.shares === 0) row.avgCost = 0;
+    } else if (txn.type === 'DIVIDEND') {
+      row.dividends += amount;
+    }
+  }
+
+  return [...positions.entries()].reduce((acc, [ticker, row]) => {
+    const price = Number(quoteMap[ticker] || 0);
+    const unrealized = row.shares * (price - row.avgCost);
+    acc.marketValue += row.shares * price;
+    acc.unrealized += unrealized;
+    acc.realized += row.realizedPnl;
+    acc.dividends += row.dividends;
+    acc.totalPnl += unrealized + row.realizedPnl + row.dividends;
+    return acc;
+  }, { marketValue: 0, unrealized: 0, realized: 0, dividends: 0, totalPnl: 0 });
+}
+
+function latestQuoteDateForRows(rows, fallbackDate) {
+  return (rows || [])
+    .map((row) => row.quote_date)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || fallbackDate;
+}
+
+function adjustedPeriodCapitalBase(transactions, snapshotDate, endDate, snapshotMarketValue) {
+  if (!snapshotDate || !endDate) return Math.abs(Number(snapshotMarketValue || 0));
+
+  const netSecurityFlows = transactions
+    .filter((txn) => txn.type === 'BUY' || txn.type === 'SELL')
+    .filter((txn) => {
+      const date = String(txn.transaction_date || '');
+      return date > snapshotDate && date <= endDate;
+    })
+    .reduce((sum, txn) => {
+      const amount = Math.abs(Number(txn.amount || 0));
+      return sum + (txn.type === 'BUY' ? amount : -amount);
+    }, 0);
+
+  return Math.abs(Number(snapshotMarketValue || 0)) + netSecurityFlows;
 }
 
 function parseCSVLine(line) {
@@ -506,16 +666,22 @@ export default function TransactionsTab({
   user,
   sb,
   showToast,
+  sendNotification,
   forcedView = null,
   showViewToggle = true,
   embedded = false,
+  hidePnlTable = false,
+  pnlTableOnly = false,
 }) {
   const [txns, setTxns] = useState([]);
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [financialSnapshots, setFinancialSnapshots] = useState([]);
+  const [monthlyQuotes, setMonthlyQuotes] = useState([]);
+  const [dailyQuotes, setDailyQuotes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [accountFilter, setAccountFilter] = useState('All');
   const [typeFilter, setTypeFilter] = useState('All');
+  const [tickerFilter, setTickerFilter] = useState('All');
   const [view, setView] = useState('pnl');
   const [showAdd, setShowAdd] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
@@ -525,6 +691,7 @@ export default function TransactionsTab({
   const [xaiKey, setXaiKey] = useState('');
   const [xaiModel, setXaiModel] = useState('grok-4-1-fast-reasoning');
   const [newTxn, setNewTxn] = useState(EMPTY_TXN);
+  const [editingTxnId, setEditingTxnId] = useState(null);
   const [importing, setImporting] = useState(false);
   const [futuImporting, setFutuImporting] = useState(false);
   const [priceMap, setPriceMap] = useState({});
@@ -544,14 +711,20 @@ export default function TransactionsTab({
   const [futuRemoteRequests, setFutuRemoteRequests] = useState([]);
   const [localFutuBridgeAvailable, setLocalFutuBridgeAvailable] = useState(null);
   const [expandedPnlBanks, setExpandedPnlBanks] = useState({});
+  const [showFutuUnrealisedBreakdown, setShowFutuUnrealisedBreakdown] = useState(false);
   const [expandedPnlTicker, setExpandedPnlTicker] = useState(null);
   const [pnlSort, setPnlSort] = useState({ key: 'portfolioPct', direction: 'desc' });
+  const [txnSort, setTxnSort] = useState({ key: 'transaction_date', direction: 'desc' });
+  const [showPnlSettings, setShowPnlSettings] = useState(false);
   const [autoUpdateFutuOnStartup, setAutoUpdateFutuOnStartup] = useState(false);
+  const [pnlAutoRefreshTime, setPnlAutoRefreshTime] = useState('');
+  const [pnlAutoRefreshTimeDraft, setPnlAutoRefreshTimeDraft] = useState('');
+  const [pnlRefreshing, setPnlRefreshing] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const importRef = useRef(null);
-  const pnlTableScrollRef = useRef(null);
   const startupAutoRefreshRanRef = useRef(false);
   const latestRemoteRequestStatusRef = useRef({});
+  const manualPnlRequestIdsRef = useRef(new Set());
   const activeView = forcedView ?? view;
 
   const futuRows = useMemo(
@@ -613,7 +786,7 @@ export default function TransactionsTab({
 
   const load = async () => {
     setLoading(true);
-    const [{ data: txnData }, { data: accData }, { data: snapData }] = await Promise.all([
+    const [{ data: txnData }, { data: accData }, { data: snapData }, { data: monthlyQuoteData }, { data: dailyQuoteData }] = await Promise.all([
       sb
         .from('securities_transactions')
         .select('*')
@@ -629,10 +802,23 @@ export default function TransactionsTab({
         .select('*')
         .eq('user_id', user.id)
         .order('snapshot_date', { ascending: false }),
+      sb
+        .from('securities_monthly_quotes')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('month_key', { ascending: false }),
+      sb
+        .from('securities_daily_quotes')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('quote_date', { ascending: false })
+        .limit(1000),
     ]);
     setTxns(txnData || []);
     setFinancialAccounts(accData || []);
     setFinancialSnapshots(snapData || []);
+    setMonthlyQuotes(monthlyQuoteData || []);
+    setDailyQuotes(dailyQuoteData || []);
     setLoading(false);
   };
 
@@ -692,6 +878,11 @@ export default function TransactionsTab({
         setFutuAccountSummary(JSON.parse(futuAccountSummaryRow.value));
       } catch {}
     }
+    const pnlAutoRefreshRow = (data || []).find((row) => row.key === 'pnl_auto_refresh_time');
+    if (pnlAutoRefreshRow?.value) {
+      setPnlAutoRefreshTime(pnlAutoRefreshRow.value);
+      setPnlAutoRefreshTimeDraft(pnlAutoRefreshRow.value);
+    }
     setSettingsLoaded(true);
   };
 
@@ -731,25 +922,56 @@ export default function TransactionsTab({
     [txns]
   );
 
+  const tickerOptions = useMemo(
+    () => ['All', ...[...new Set(txns.map((t) => t.ticker).filter(Boolean))].sort()],
+    [txns]
+  );
+
   const filtered = useMemo(
     () =>
       txns.filter((t) => {
         if (accountFilter !== 'All' && t.account !== accountFilter) return false;
         if (typeFilter !== 'All' && t.type !== typeFilter) return false;
+        if (tickerFilter !== 'All' && t.ticker !== tickerFilter) return false;
         return true;
       }),
-    [txns, accountFilter, typeFilter]
+    [txns, accountFilter, typeFilter, tickerFilter]
   );
+
+  const toggleTxnSort = (key) => {
+    setTxnSort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === 'desc' ? 'asc' : 'desc' }
+        : { key, direction: key === 'transaction_date' ? 'desc' : 'asc' }
+    );
+  };
+
+  const sortedFiltered = useMemo(() => {
+    const valueFor = (row, key) => {
+      if (key === 'quantity') return adjustedQtyFromRow(row);
+      if (key === 'amount') return Math.abs(Number(row.amount || 0));
+      return row[key];
+    };
+    const direction = txnSort.direction === 'desc' ? -1 : 1;
+    return filtered.slice().sort((a, b) => {
+      const av = valueFor(a, txnSort.key);
+      const bv = valueFor(b, txnSort.key);
+      if (typeof av === 'number' || typeof bv === 'number') {
+        return ((Number(av || 0) - Number(bv || 0)) * direction) || compareTxnOrder(a, b);
+      }
+      return String(av || '').localeCompare(String(bv || '')) * direction || compareTxnOrder(a, b);
+    });
+  }, [filtered, txnSort]);
 
   const grouped = useMemo(() => {
     const map = {};
-    filtered.forEach((t) => {
+    sortedFiltered.forEach((t) => {
       const month = t.transaction_date?.slice(0, 7) || 'Unknown';
       if (!map[month]) map[month] = [];
       map[month].push(t);
     });
     return map;
-  }, [filtered]);
+  }, [sortedFiltered]);
 
   const months = useMemo(() => Object.keys(grouped).sort().reverse(), [grouped]);
 
@@ -810,7 +1032,7 @@ export default function TransactionsTab({
         row.investedCost = row.shares * row.avgCost;
         if (row.shares === 0) row.avgCost = 0;
       } else if (txn.type === 'DIVIDEND') {
-        row.dividends += amount + Number(txn.tax_withheld || 0);
+        row.dividends += amount; // tax_withheld is stored negative; use gross Cash Dividend only
       }
 
       if (txn.type === 'BUY' || txn.type === 'SELL') {
@@ -1010,14 +1232,7 @@ export default function TransactionsTab({
     setExpandedPnlTicker((current) => (current === ticker ? null : ticker));
   };
 
-  const scrollPnlTable = (direction) => {
-    const container = pnlTableScrollRef.current;
-    if (!container) return;
-    container.scrollBy({
-      left: direction * 260,
-      behavior: 'smooth',
-    });
-  };
+  const pnlSortLabel = PNL_SORT_OPTIONS.find((option) => option.key === pnlSort.key)?.label || pnlSort.key;
 
   const financeSecuritiesByBank = useMemo(() => {
     const cutoff = new Date();
@@ -1239,13 +1454,13 @@ export default function TransactionsTab({
         const oldPortfolioPnl = Number(oldPortfolioPnlByBank[row.bank] || 0);
         const futuRowsForBank = positionRows.filter((position) => normalizeBankLabel(position.account) === row.bank);
         const dilutedOpenCostBasis = futuRowsForBank.reduce((sum, position) => {
-          const netOpenCost = (position.buyAmount || 0) - (position.sellAmount || 0);
-          return sum + Math.max(0, netOpenCost);
+          return sum + (position.investedCost || 0);
         }, 0);
         const futuUnrealizedPnl = futuRowsForBank.reduce((sum, position) => {
           const marketValue = position.marketValue || 0;
-          const netOpenCost = Math.max(0, (position.buyAmount || 0) - (position.sellAmount || 0));
-          return sum + (marketValue - netOpenCost);
+          const netOpenCost = position.investedCost || 0; // shares × avgCost = actual cost basis of remaining shares
+          const dividends = position.dividends || 0;
+          return sum + (marketValue - (netOpenCost - dividends));
         }, 0);
         return {
           ...row,
@@ -1283,6 +1498,7 @@ export default function TransactionsTab({
       if (row.bank === 'Futubull') acc.futuDividends += row.dividends || 0;
       acc.totalPnl += row.totalPnl || 0;
       acc.revisedTotalPnl += row.revisedTotalPnl || 0;
+      acc.cashInvested += (row.cashIn || 0) - (row.cashOut || 0);
       return acc;
     }, {
       marketValue: 0,
@@ -1293,8 +1509,105 @@ export default function TransactionsTab({
       futuDividends: 0,
       totalPnl: 0,
       revisedTotalPnl: 0,
+      cashInvested: 0,
     });
   }, [bankPnlRows]);
+
+  const periodPnlSummary = useMemo(() => {
+    const todayStr = zonedIsoDate(new Date(), FUTU_PNL_TIME_ZONE);
+    const currentTotal = totalPnlSummary.totalPnl || 0;
+
+    const quoteMapForRows = (rows) => Object.fromEntries(
+      (rows || [])
+        .filter((row) => row.ticker && row.price != null)
+        .map((row) => [String(row.ticker).toUpperCase(), Number(row.price)])
+    );
+
+    const dailyDates = [...new Set(
+      dailyQuotes
+        .map((row) => row.quote_date)
+        .filter((date) => date && date < todayStr)
+    )].sort().reverse();
+    const previousDate = dailyDates[0] || '';
+    const previousQuoteMap = previousDate
+      ? quoteMapForRows(dailyQuotes.filter((row) => row.quote_date === previousDate))
+      : {};
+    const previousSnapshot = previousDate
+      ? buildTotalPnlSnapshot(
+        txns,
+        previousDate,
+        previousQuoteMap
+      )
+      : null;
+    const priorDate = dailyDates.find((date) => date < previousDate) || '';
+    const priorRows = priorDate ? dailyQuotes.filter((row) => row.quote_date === priorDate) : [];
+    const priorSnapshot = priorRows.length
+      ? buildTotalPnlSnapshot(txns, priorDate, quoteMapForRows(priorRows))
+      : null;
+
+    const currentMonth = monthKeyFromDate(todayStr);
+    const mtdMonth = previousMonthKey(currentMonth);
+    const mtdRows = monthlyQuotes.filter((row) => row.month_key === mtdMonth);
+    const mtdSnapshotDate = latestQuoteDateForRows(mtdRows, `${mtdMonth}-28`);
+    const mtdSnapshot = mtdRows.length
+      ? buildTotalPnlSnapshot(txns, mtdSnapshotDate, quoteMapForRows(mtdRows))
+      : null;
+
+    const ytdMonth = previousYearEndMonthKey(todayStr);
+    const ytdRows = monthlyQuotes.filter((row) => row.month_key === ytdMonth);
+    const ytdSnapshotDate = latestQuoteDateForRows(ytdRows, `${ytdMonth}-31`);
+    const ytdSnapshot = ytdRows.length
+      ? buildTotalPnlSnapshot(txns, ytdSnapshotDate, quoteMapForRows(ytdRows))
+      : null;
+
+    const livePricesMatchPreviousClose = () => {
+      const comparable = Object.entries(previousQuoteMap)
+        .map(([ticker, previousPrice]) => {
+          const current = priceMap[ticker];
+          return {
+            ticker,
+            previousPrice: Number(previousPrice),
+            currentPrice: Number(current?.price),
+            updatedAt: String(current?.updatedAt || ''),
+            source: String(current?.source || current?.originalSource || ''),
+          };
+        })
+        .filter((row) => Number.isFinite(row.previousPrice) && Number.isFinite(row.currentPrice));
+      if (comparable.length < 3) return false;
+      const matching = comparable.filter((row) => Math.abs(row.currentPrice - row.previousPrice) < 0.005);
+      const closeLike = matching.filter((row) => {
+        const lowerSource = row.source.toLowerCase();
+        const timeOnlyClose = /^16:00(?::00)?/.test(row.updatedAt);
+        return lowerSource.includes('last price') && timeOnlyClose;
+      });
+      return matching.length === comparable.length && closeLike.length >= Math.max(3, Math.floor(comparable.length * 0.8));
+    };
+
+    const makeMetric = (label, anchorLabel, snapshot, snapshotDate, options = {}) => {
+      const total = options.currentTotalOverride ?? currentTotal;
+      const value = snapshot ? total - snapshot.totalPnl : null;
+      const capitalBase = adjustedPeriodCapitalBase(txns, snapshotDate, todayStr, snapshot?.marketValue || 0);
+      return {
+        label,
+        anchorLabel,
+        value,
+        pct: value != null && capitalBase > 0 ? (value / capitalBase) * 100 : null,
+      };
+    };
+
+    const currentLooksLikeLatestClose = previousDate && livePricesMatchPreviousClose();
+    const dailyMetric = currentLooksLikeLatestClose
+      ? makeMetric('Daily P&L', priorDate ? `vs ${priorDate}` : 'prior close missing', priorSnapshot, priorDate, {
+        currentTotalOverride: previousSnapshot?.totalPnl,
+      })
+      : makeMetric('Daily P&L', previousDate ? `vs ${previousDate}` : 'previous close missing', previousSnapshot, previousDate);
+
+    return [
+      dailyMetric,
+      makeMetric('MTD P&L', mtdRows.length ? `vs ${mtdMonth}` : `${mtdMonth || 'prior month'} missing`, mtdSnapshot, mtdSnapshotDate),
+      makeMetric('YTD P&L', ytdRows.length ? `vs ${ytdMonth}` : `${ytdMonth || 'prior year-end'} missing`, ytdSnapshot, ytdSnapshotDate),
+    ];
+  }, [dailyQuotes, monthlyQuotes, priceMap, totalPnlSummary.totalPnl, txns]);
 
   const saveOldPortfolioPnl = async (bank, value) => {
     const numeric = Number(value || 0);
@@ -1399,6 +1712,43 @@ export default function TransactionsTab({
       return null;
     } finally {
       setFutuSummaryLoading(false);
+    }
+  };
+
+  const runSequentialPnlRefresh = async () => {
+    if (pnlRefreshing) return;
+    setPnlRefreshing(true);
+    try {
+      const hasLocal = await checkLocalFutuBridge();
+      if (hasLocal) {
+        await importFromFutu();
+        await refreshPrices();
+        sendNotification?.('P&L refreshed', 'Transactions and prices are up to date', 'pnl', user.id);
+        return;
+      }
+      const pollUntilDone = async (requestId) => {
+        for (let i = 0; i < 90; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const { data } = await sb.from('futu_refresh_requests').select('status').eq('id', requestId).maybeSingle();
+          if (data?.status === 'completed' || data?.status === 'failed') return;
+        }
+      };
+      const txnReq = await enqueueFutuRefreshRequest(FUTU_REQUEST_TYPES.transactions, { trigger: 'manual_pnl' });
+      if (txnReq?.id) manualPnlRequestIdsRef.current.add(txnReq.id);
+      if (txnReq?.id) { showToast('Refreshing transactions…'); await pollUntilDone(txnReq.id); }
+      const priceReq = await enqueueFutuRefreshRequest(FUTU_REQUEST_TYPES.prices, { price_mode: futuPriceMode });
+      if (priceReq?.id) manualPnlRequestIdsRef.current.add(priceReq.id);
+      if (priceReq?.id) { showToast('Refreshing prices…'); await pollUntilDone(priceReq.id); }
+      const summaryReq = await enqueueFutuRefreshRequest(FUTU_REQUEST_TYPES.summary, { trigger: 'manual_pnl' });
+      if (summaryReq?.id) manualPnlRequestIdsRef.current.add(summaryReq.id);
+      if (summaryReq?.id) { showToast('Refreshing P&L summary…'); await pollUntilDone(summaryReq.id); }
+      await Promise.all([load(), loadSettings()]);
+      showToast('P&L refresh complete');
+      sendNotification?.('P&L refreshed', 'Transactions, prices, and summary are up to date', 'pnl', user.id);
+    } catch (err) {
+      showToast(`P&L refresh failed: ${err.message}`);
+    } finally {
+      setPnlRefreshing(false);
     }
   };
 
@@ -1692,6 +2042,35 @@ export default function TransactionsTab({
     return fallbackText;
   };
 
+  const closeTxnForm = () => {
+    setShowAdd(false);
+    setEditingTxnId(null);
+    setNewTxn(EMPTY_TXN);
+  };
+
+  const openEditTxn = (txn) => {
+    setEditingTxnId(txn.id);
+    setNewTxn({
+      ...EMPTY_TXN,
+      ...txn,
+      transaction_date: txn.transaction_date || EMPTY_TXN.transaction_date,
+      type: txn.type || EMPTY_TXN.type,
+      ticker: txn.ticker || '',
+      name: txn.name || '',
+      quantity: txn.quantity ?? '',
+      original_quantity: txn.original_quantity ?? txn.quantity ?? '',
+      stock_split: txn.stock_split ?? '1',
+      price: txn.price ?? '',
+      currency: txn.currency || 'USD',
+      amount: txn.amount ?? '',
+      tax_withheld: txn.tax_withheld ?? '',
+      account: txn.account || 'HSBC',
+      order_ref: txn.order_ref || '',
+      notes: txn.notes || '',
+    });
+    setShowAdd(true);
+  };
+
   const saveTxn = async () => {
     const originalQty = newTxn.original_quantity ? Number(newTxn.original_quantity) : (newTxn.quantity ? Number(newTxn.quantity) : null);
     const split = newTxn.stock_split ? Number(newTxn.stock_split) : 1;
@@ -1701,7 +2080,7 @@ export default function TransactionsTab({
     const row = {
       ...newTxn,
       user_id: user.id,
-      sort_order: Date.now(),
+      sort_order: editingTxnId ? (newTxn.sort_order ?? Date.now()) : Date.now(),
       ticker: type === 'DEPOSIT' || type === 'WITHDRAWAL' ? '' : newTxn.ticker.trim().toUpperCase(),
       name:
         type === 'DEPOSIT'
@@ -1717,20 +2096,28 @@ export default function TransactionsTab({
       tax_withheld: type === 'DIVIDEND' && newTxn.tax_withheld ? Number(newTxn.tax_withheld) : null,
       source: 'manual',
     };
+    delete row.id;
+    delete row.created_at;
 
-    const { error } = await sb.from('securities_transactions').insert(row);
+    const { error } = editingTxnId
+      ? await sb.from('securities_transactions').update(row).eq('id', editingTxnId)
+      : await sb.from('securities_transactions').insert(row);
     if (error) {
       showToast('Error: ' + error.message);
       return;
     }
-    showToast('Saved');
-    setShowAdd(false);
-    setNewTxn(EMPTY_TXN);
+    showToast(editingTxnId ? 'Updated' : 'Saved');
+    closeTxnForm();
     load();
   };
 
   const deleteTxn = async (id) => {
-    await sb.from('securities_transactions').delete().eq('id', id);
+    if (!window.confirm('Delete this securities transaction? This cannot be undone.')) return;
+    const { error } = await sb.from('securities_transactions').delete().eq('id', id);
+    if (error) {
+      showToast('Error: ' + error.message);
+      return;
+    }
     setTxns((curr) => curr.filter((x) => x.id !== id));
     showToast('Deleted');
   };
@@ -1940,60 +2327,437 @@ export default function TransactionsTab({
   };
 
   const s = {
-    card: { background: '#fff', borderRadius: 12, padding: '12px 14px', boxShadow: '0 1px 3px rgba(0,0,0,0.07)', marginBottom: 10 },
+    card: { background: CLAY.surface, borderRadius: UI.cardRadius, padding: '12px 14px', boxShadow: CLAY.shadow, marginBottom: UI.sectionGap },
     pill: (on) => ({
       padding: '4px 10px',
-      borderRadius: 20,
+      borderRadius: 9999,
       border: 'none',
       cursor: 'pointer',
-      fontSize: 10,
+      fontSize: FS.lg,
       fontFamily: MONO,
-      fontWeight: 700,
-      letterSpacing: '0.04em',
-      textTransform: 'uppercase',
-      background: on ? '#1a1a1a' : '#f0f0ea',
-      color: on ? '#fff' : '#1a1a1a',
+      fontWeight: on ? FW.semibold : FW.normal,
+      letterSpacing: '0.04em', background: on ? CLAY.text : CLAY.surf2,
+      color: on ? CLAY.surface : CLAY.textMid,
+      boxShadow: on ? UI.activeShadow : CLAY.btn,
     }),
-    label: { fontSize: 10, fontFamily: MONO, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', opacity: 0.4 },
-    input: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontFamily: MONO, fontSize: 12, background: '#fafaf8', outline: 'none' },
+    label: { fontSize: FS.lg, fontFamily: MONO, fontWeight: FW.semibold, letterSpacing: '0.05em', color: CLAY.textMid },
+    input: { width: '100%', padding: '12px 14px', borderRadius: UI.controlRadius, border: 'none', fontFamily: MONO, fontSize: FS.lg, background: CLAY.surf2, color: CLAY.text, outline: 'none' },
     btn: (primary) => ({
       padding: '8px 16px',
-      borderRadius: 8,
+      borderRadius: UI.controlRadius,
       border: 'none',
       cursor: 'pointer',
       fontFamily: MONO,
-      fontSize: 12,
-      fontWeight: 700,
+      fontSize: FS.lg,
+      fontWeight: FW.semibold,
       letterSpacing: '0.04em',
-      background: primary ? '#1a1a1a' : '#f0f0ea',
-      color: primary ? '#fff' : '#1a1a1a',
+      background: primary ? CLAY.text : CLAY.surf2,
+      color: primary ? CLAY.surface : CLAY.textMid,
+      boxShadow: primary ? '4px 4px 12px rgba(44,36,32,0.28)' : CLAY.btn,
       opacity: importing || priceLoading ? 0.8 : 1,
     }),
   };
 
+  const ledgerColumns = [
+    {
+      key: 'transaction_date',
+      top: 'Date',
+      width: 76,
+      min: 68,
+      sticky: true,
+      align: 'center',
+      render: (t) => <span style={{ color: CLAY.textMid }}>{t.transaction_date?.slice(5)}</span>,
+    },
+    {
+      key: 'type',
+      top: 'Type',
+      width: 86,
+      min: 76,
+      render: (t) => {
+        const tc = TYPE_COLORS[t.type] || TYPE_COLORS.OTHER;
+        return (
+          <span style={{ padding: '1px 6px', borderRadius: 9999, background: tc.bg, color: tc.text, fontWeight: FW.semibold, fontSize: FS.lg, whiteSpace: 'nowrap' }}>
+            {t.type}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'ticker',
+      top: 'Ticker',
+      width: 118,
+      min: 96,
+      emphasis: true,
+      title: (t) => [t.ticker || t.name, t.ticker && t.name && t.name !== t.ticker ? t.name : '', CASH_TYPES.has(t.type) ? t.notes : ''].filter(Boolean).join(' · '),
+      render: (t) => (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ overflowWrap: 'anywhere' }}>{t.ticker || t.name || '—'}</div>
+          {t.ticker && t.name && t.name !== t.ticker && (
+            <div style={{ fontWeight: FW.normal, color: CLAY.textMid, overflowWrap: 'anywhere' }}>{t.name}</div>
+          )}
+          {(CASH_TYPES.has(t.type) && t.notes) && (
+            <div style={{ fontWeight: FW.normal, color: CLAY.textMid, overflowWrap: 'anywhere' }}>{t.notes}</div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'quantity',
+      top: 'Qty',
+      width: 64,
+      min: 58,
+      render: (t) => {
+        const hasSplit = SECURITY_TYPES.has(t.type) && t.type !== 'DIVIDEND' && splitFromRow(t) !== 1;
+        if (SECURITY_TYPES.has(t.type) && t.type !== 'DIVIDEND' && t.quantity != null) {
+          return hasSplit
+            ? <span title={`${fmt(originalQtyFromRow(t), 0)} × ${fmt(splitFromRow(t), 2)} split`}>{fmt(adjustedQtyFromRow(t), 0)}</span>
+            : fmt(adjustedQtyFromRow(t), 0);
+        }
+        if (t.type === 'DIVIDEND' && t.tax_withheld != null) return <span style={{ color: CLAY.textLt }}>tax {fmt(t.tax_withheld, 0)}</span>;
+        return '—';
+      },
+    },
+    {
+      key: 'price',
+      top: 'Price',
+      width: 104,
+      min: 84,
+      render: (t) => SECURITY_TYPES.has(t.type) && t.type !== 'DIVIDEND' && t.price != null ? fmt(t.price, 2) : '—',
+    },
+    {
+      key: 'amount',
+      top: 'Amount',
+      width: 128,
+      min: 106,
+      emphasis: true,
+      render: (t) => `${t.currency} ${fmt(Math.abs(t.amount || 0), 0)}`,
+    },
+    {
+      key: 'account',
+      top: 'Account',
+      width: 180,
+      min: 130,
+      title: (t) => [t.account, t.order_ref].filter(Boolean).join(' · '),
+      render: (t) => (
+        <span style={{ color: CLAY.textLt, overflowWrap: 'anywhere' }}>
+          {t.account}{t.order_ref ? <span> · {t.order_ref}</span> : ''}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      top: '',
+      width: 96,
+      min: 86,
+      action: true,
+      sortable: false,
+      render: (t) => (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => openEditTxn(t)}
+            style={{ border: 'none', borderRadius: 999, background: CLAY.surf2, color: CLAY.textMid, cursor: 'pointer', padding: '4px 8px', fontFamily: MONO, fontSize: FS.compact }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={() => deleteTxn(t.id)}
+            style={{ border: 'none', borderRadius: 999, background: '#fee2e2', color: '#dc2626', cursor: 'pointer', padding: '4px 8px', fontFamily: MONO, fontSize: FS.compact }}
+          >
+            Delete
+          </button>
+        </div>
+      ),
+    },
+  ];
+
+  const ledgerSections = months.map((month) => ({
+    id: month,
+    label: month,
+    rows: grouped[month] || [],
+  }));
+
+  const pnlTableColumns = [
+    {
+      key: 'ticker',
+      top: 'Stock',
+      sticky: true,
+      width: 78,
+      min: 68,
+      maxVw: 25,
+      emphasis: true,
+      render: (row) => {
+        const isExpanded = expandedPnlTicker === row.ticker;
+        return (
+          <button
+            onClick={() => togglePnlTickerBreakdown(row.ticker)}
+            style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <span style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.15 }}>{row.ticker}</span>
+              <span style={{ fontSize: FS.lg, opacity: 0.4 }}>{isExpanded ? '▾' : '▸'}</span>
+            </div>
+            <div style={{ fontSize: FS.lg, opacity: 0.45, marginTop: 2, lineHeight: 1.1, whiteSpace: 'pre-line', textAlign: 'center' }}>
+              {String(row.account || '')
+                .replace(/Futu HK/g, 'Futu')
+                .replace(/\s*\+\s*/g, '\n')
+                .replace(/Futu\n/g, 'Futu ')}
+            </div>
+          </button>
+        );
+      },
+    },
+    {
+      key: 'marketValue',
+      top: 'Market Value',
+      bottom: 'Shares',
+      width: 96,
+      min: 82,
+      maxVw: 24,
+      render: (row) => (
+        <>
+          <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.2, fontSize: FS.lg, whiteSpace: 'nowrap', textAlign: 'center' }}>{fmt(row.marketValue, 0)}</div>
+          <div style={{ marginTop: 2, fontSize: FS.lg, opacity: 0.55, lineHeight: 1.1, textAlign: 'center' }}>{fmt(row.shares, 0)}</div>
+        </>
+      ),
+    },
+    {
+      key: 'currentPrice',
+      top: 'Price',
+      bottom: 'Cost',
+      width: 74,
+      min: 66,
+      maxVw: 18,
+      render: (row) => (
+        <>
+          <input
+            type="number"
+            step="0.01"
+            value={Object.prototype.hasOwnProperty.call(manualPriceDrafts, row.ticker) ? manualPriceDrafts[row.ticker] : fmtInputPrice(row.currentPrice)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setManualPriceDrafts((prev) => ({ ...prev, [row.ticker]: val }));
+            }}
+            onBlur={async () => {
+              const draftValue = Object.prototype.hasOwnProperty.call(manualPriceDrafts, row.ticker)
+                ? manualPriceDrafts[row.ticker]
+                : String(row.currentPrice ?? '');
+              await persistManualPrice(row.ticker, draftValue);
+              setManualPriceDrafts((prev) => {
+                const next = { ...prev };
+                delete next[row.ticker];
+                return next;
+              });
+            }}
+            onKeyDown={async (e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') {
+                setManualPriceDrafts((prev) => {
+                  const next = { ...prev };
+                  delete next[row.ticker];
+                  return next;
+                });
+                e.currentTarget.blur();
+              }
+            }}
+            style={{ ...s.input, width: '100%', minWidth: 0, maxWidth: '100%', padding: '3px 5px', height: 'auto', fontSize: FS.lg, textAlign: 'center' }}
+          />
+          <div style={{ marginTop: 2, fontSize: FS.lg, opacity: 0.55, lineHeight: 1.1, textAlign: 'center' }}>{fmt(row.avgCost, 2)}</div>
+        </>
+      ),
+    },
+    {
+      key: 'unrealizedPnl',
+      top: 'Unrealised',
+      bottom: '%',
+      width: 108,
+      min: 94,
+      maxVw: 24,
+      render: (row) => {
+        const color = (row.unrealizedPnl || 0) >= 0 ? CLAY.green : CLAY.red;
+        return (
+          <>
+            <div style={{ fontWeight: 700, color, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtSigned(row.unrealizedPnl, 0)}</div>
+            <div style={{ marginTop: 2, fontSize: FS.lg, color, lineHeight: 1.1, textAlign: 'center' }}>{fmtPct(row.unrealizedPct, 2)}</div>
+          </>
+        );
+      },
+    },
+    {
+      key: 'realizedPnl',
+      top: 'Realised',
+      width: 82,
+      min: 72,
+      maxVw: 20,
+      render: (row) => (
+        <div style={{ fontWeight: 700, color: row.realizedPnl >= 0 ? CLAY.green : CLAY.red, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtSigned(row.realizedPnl, 0)}</div>
+      ),
+    },
+    {
+      key: 'totalPnl',
+      top: 'Total P&L',
+      bottom: '%',
+      width: 88,
+      min: 76,
+      maxVw: 22,
+      render: (row) => {
+        const color = row.totalPnl >= 0 ? CLAY.green : CLAY.red;
+        return (
+          <>
+            <div style={{ fontWeight: 700, color, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtSigned(row.totalPnl, 0)}</div>
+            <div style={{ marginTop: 2, fontSize: FS.lg, color, lineHeight: 1.1, textAlign: 'center' }}>{fmtPct(row.totalPnlPct, 2)}</div>
+          </>
+        );
+      },
+    },
+    {
+      key: 'dividends',
+      top: 'Dividend',
+      width: 80,
+      min: 70,
+      maxVw: 20,
+      render: (row) => (
+        <div style={{ fontWeight: 700, color: (row.dividends || 0) >= 0 ? CLAY.green : CLAY.red, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>
+          {fmtSigned(row.dividends, 0)}
+        </div>
+      ),
+    },
+    {
+      key: 'investedCost',
+      top: 'Cost',
+      bottom: 'Basis',
+      width: 78,
+      min: 68,
+      maxVw: 20,
+      render: (row) => (
+        <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.1, fontSize: FS.lg, whiteSpace: 'nowrap', textAlign: 'center' }}>
+          {fmt(row.investedCost, 0)}
+        </div>
+      ),
+    },
+    {
+      key: 'portfolioPct',
+      top: '%',
+      width: 48,
+      min: 44,
+      maxVw: 14,
+      render: (row) => <div style={{ fontWeight: 700, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtPct(row.portfolioPct, 2)}</div>,
+    },
+  ];
+
+  const renderPnlTableExtra = (row) => {
+    const isExpanded = expandedPnlTicker === row.ticker;
+    const bankBreakdownRows = pnlBreakdownByTicker.get(row.ticker) || [];
+    if (!isExpanded || bankBreakdownRows.length === 0) return null;
+    return (
+      <tr style={{ ...tableRowStyle, background: CLAY.surf2 }}>
+        <td colSpan={pnlTableColumns.length} style={{ padding: '8px 10px 10px' }}>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {bankBreakdownRows.map((bankRow) => {
+              const bankTotalPnlColor = bankRow.totalPnl >= 0 ? CLAY.green : CLAY.red;
+              const bankUnrealizedColor = (bankRow.unrealizedPnl || 0) >= 0 ? CLAY.green : CLAY.red;
+              const bankRealizedColor = bankRow.realizedPnl >= 0 ? CLAY.green : CLAY.red;
+              return (
+                <div
+                  key={bankRow.key}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(84px, 1.2fr) repeat(6, minmax(0, 1fr))',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '8px 10px',
+                    borderRadius: 10,
+                    background: CLAY.surface,
+                    border: `1px solid ${CLAY.surf2}`,
+                  }}
+                >
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Bank</div><div style={{ fontSize: FS.lg, fontWeight: 700 }}>{String(bankRow.account || '').replace(/Futu HK/g, 'Futu')}</div></div>
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Mkt / Shares</div><div style={{ fontSize: FS.lg }}>{fmt(bankRow.marketValue, 0)}</div><div style={{ fontSize: FS.lg, opacity: 0.55 }}>{fmt(bankRow.shares, 0)}</div></div>
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Price / Cost</div><div style={{ fontSize: FS.lg }}>{fmt(bankRow.currentPrice, 2)}</div><div style={{ fontSize: FS.lg, opacity: 0.55 }}>{fmt(bankRow.avgCost, 2)}</div></div>
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Unreal.</div><div style={{ fontSize: FS.lg, color: bankUnrealizedColor }}>{fmtSigned(bankRow.unrealizedPnl, 0)}</div><div style={{ fontSize: FS.lg, color: bankUnrealizedColor, opacity: 0.75 }}>{fmtPct(bankRow.unrealizedPct, 2)}</div></div>
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Realised</div><div style={{ fontSize: FS.lg, color: bankRealizedColor }}>{fmtSigned(bankRow.realizedPnl, 0)}</div></div>
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Total P&L</div><div style={{ fontSize: FS.lg, color: bankTotalPnlColor }}>{fmtSigned(bankRow.totalPnl, 0)}</div><div style={{ fontSize: FS.lg, color: bankTotalPnlColor, opacity: 0.75 }}>{fmtPct(bankRow.totalPnlPct, 2)}</div></div>
+                  <div><div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Div / Cost</div><div style={{ fontSize: FS.lg }}>{fmtSigned(bankRow.dividends, 0)}</div><div style={{ fontSize: FS.lg, opacity: 0.55 }}>{fmt(bankRow.investedCost, 0)}</div></div>
+                </div>
+              );
+            })}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const pnlTableSettingsPanel = (
+    <div style={{ display: 'grid', gap: 10, fontSize: FS.lg, color: CLAY.textMid, lineHeight: 1.5 }}>
+      <div style={s.label}>P&L Table Settings</div>
+      <label style={{ display: 'grid', gap: 4, maxWidth: 220 }}>
+        <span>Futu price mode</span>
+        <select
+          style={s.input}
+          value={futuPriceMode}
+          onChange={async (e) => {
+            const nextValue = e.target.value;
+            setFutuPriceMode(nextValue);
+            await saveSettingValue('futu_price_mode', nextValue);
+          }}
+        >
+          <option value="live">Live</option>
+          <option value="market_close">Market Close</option>
+          <option value="pre_price">Pre-Market</option>
+          <option value="after_price">After-Hours</option>
+          <option value="overnight_price">Overnight</option>
+        </select>
+      </label>
+      <div>Tap any heading to sort. Tap a stock row to show its bank breakdown.</div>
+    </div>
+  );
+
   return (
-    <div style={{ padding: `${embedded ? 8 : 16}px 16px 140px`, fontFamily: MONO }}>
+    <div style={{ padding: `${embedded ? 8 : 16}px 16px ${embedded ? 8 : 140}px`, fontFamily: MONO }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       <input ref={importRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importFromFile} />
 
+      {!pnlTableOnly && (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: embedded ? 'flex-end' : 'space-between', marginBottom: showViewToggle ? 14 : 12, gap: 8 }}>
         {!embedded && (
-          <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em' }}>
+          <div style={{ fontFamily: MONO, fontSize: FS.heading, fontWeight: FW.black, color: CLAY.text, lineHeight: 1, marginBottom: 8 }}>
             {activeView === 'pnl' ? 'P&L' : activeView === 'settings' ? 'Settings' : 'Transactions'}
           </div>
         )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {activeView === 'settings' && (
-            <button onClick={exportPortfolioToFile} style={s.btn(false)} disabled={sortedPnlRows.filter((row) => Number(row.shares || 0) > 0).length === 0}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Download size={12} />
-                Export Portfolio CSV
-              </span>
-            </button>
+          {activeView === 'pnl' && (
+            <>
+              {lastFutuPriceRefreshAt && (
+                <span style={{ fontFamily: MONO, fontSize: FS.compact, color: CLAY.textLt, alignSelf: 'center', whiteSpace: 'nowrap' }}>
+                  {(() => {
+                    const d = new Date(lastFutuPriceRefreshAt);
+                    const today = new Date();
+                    const sameDay = d.toDateString() === today.toDateString();
+                    return sameDay
+                      ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                      : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                  })()}
+                </span>
+              )}
+              <button onClick={runSequentialPnlRefresh} disabled={pnlRefreshing} style={{ ...s.btn(pnlRefreshing), padding: '6px 10px', minWidth: 0, opacity: pnlRefreshing ? 0.85 : 1 }}>
+                <RefreshCw size={13} style={pnlRefreshing ? { animation: 'spin 1s linear infinite' } : {}} />
+              </button>
+              <button onClick={() => setShowPnlSettings(v => !v)} style={{ ...s.btn(showPnlSettings), padding: '6px 10px', minWidth: 0 }}>
+                <Settings size={13} />
+              </button>
+            </>
           )}
           {activeView !== 'pnl' && activeView !== 'settings' && (
             <>
-              <button onClick={() => setShowPaste(true)} style={s.btn(false)}>Paste</button>
-              <button onClick={() => setShowAdd(true)} style={{ ...s.btn(true), display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button
+                onClick={() => {
+                  setEditingTxnId(null);
+                  setNewTxn(EMPTY_TXN);
+                  setShowAdd(true);
+                }}
+                style={{ ...s.btn(true), display: 'flex', alignItems: 'center', gap: 4 }}
+              >
                 <Plus size={12} />
                 Add
               </button>
@@ -2001,10 +2765,11 @@ export default function TransactionsTab({
           )}
         </div>
       </div>
+      )}
 
-      {showViewToggle && (
+      {!pnlTableOnly && showViewToggle && (
         <div style={{ marginBottom: 10, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {[{ id: 'ledger', label: 'Transactions' }, { id: 'pnl', label: 'P&L' }, { id: 'settings', label: 'Settings' }].map((item) => (
+          {[{ id: 'ledger', label: 'Transactions' }, { id: 'pnl', label: 'P&L' }].map((item) => (
             <button key={item.id} onClick={() => setView(item.id)} style={s.pill(activeView === item.id)}>
               {item.label}
             </button>
@@ -2012,21 +2777,21 @@ export default function TransactionsTab({
         </div>
       )}
 
-      {activeView === 'settings' && (
+      {!pnlTableOnly && (activeView === 'settings' || (activeView === 'pnl' && showPnlSettings)) && (
         <>
           <div style={s.card}>
             <div style={{ ...s.label, marginBottom: 10 }}>Futu Tools</div>
-            <div style={{ fontSize: 12, opacity: 0.55, marginBottom: 10, lineHeight: 1.6 }}>
+            <div style={{ fontSize: FS.lg, opacity: 0.55, marginBottom: 10, lineHeight: 1.6 }}>
               Syncs with your local OpenD bridge on <strong>127.0.0.1:8765</strong>. On this Windows machine the actions run immediately; on Android or another device they queue a remote request for your Windows listener through Supabase Realtime.
             </div>
-            <div style={{ fontSize: 10, opacity: 0.5, marginBottom: 10 }}>
+            <div style={{ fontSize: FS.lg, opacity: 0.5, marginBottom: 10 }}>
               {localFutuBridgeAvailable == null
                 ? 'Checking whether the local Futu bridge is reachable from this device…'
                 : localFutuBridgeAvailable
                 ? 'Local bridge reachable on this device.'
                 : 'Local bridge not reachable here. Refresh buttons will queue a remote request instead.'}
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 12, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: FS.lg, cursor: 'pointer' }}>
               <input
                 type="checkbox"
                 checked={autoUpdateFutuOnStartup}
@@ -2038,11 +2803,44 @@ export default function TransactionsTab({
               />
               <span>Auto update Futu at startup</span>
             </label>
-            <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10 }}>
+            <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 10 }}>
               When enabled, the app refreshes Futu transactions, Futu prices, and the Futu P&amp;L summary once after startup.
             </div>
+            <div style={{ ...s.label, marginBottom: 4 }}>Scheduled Auto Refresh ({FUTU_PNL_TIME_ZONE_LABEL})</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+              <input
+                type="time"
+                value={pnlAutoRefreshTimeDraft}
+                onChange={e => setPnlAutoRefreshTimeDraft(e.target.value)}
+                style={{ ...s.input, flex: 1, maxWidth: 140 }}
+              />
+              <button
+                onClick={async () => {
+                  setPnlAutoRefreshTime(pnlAutoRefreshTimeDraft);
+                  await saveSettingValue('pnl_auto_refresh_time', pnlAutoRefreshTimeDraft);
+                  showToast('Saved');
+                }}
+                style={{ ...s.btn(false), padding: '6px 14px' }}
+              >Save</button>
+              {pnlAutoRefreshTime && (
+                <button
+                  onClick={async () => {
+                    setPnlAutoRefreshTime('');
+                    setPnlAutoRefreshTimeDraft('');
+                    await saveSettingValue('pnl_auto_refresh_time', '');
+                    showToast('Cleared');
+                  }}
+                  style={{ ...s.btn(false), padding: '6px 10px' }}
+                ><X size={13} /></button>
+              )}
+            </div>
+            <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 10 }}>
+              {pnlAutoRefreshTime
+                ? `Queues a full P&L sync daily at ${describeFutuPnlRefreshTime(pnlAutoRefreshTime)}. Your Windows Futu listener processes it in the background.`
+                : `Set a US/Eastern time to auto-queue a full P&L sync once per day. The app will show the matching ${LOCAL_REFERENCE_TIME_ZONE_LABEL} time here.`}
+            </div>
             <div style={{ ...s.label, marginBottom: 4 }}>Latest Futu Trade In App</div>
-            <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 10 }}>{latestFutuTradeDate || 'No Futu transactions imported yet'}</div>
+            <div style={{ fontWeight: 700, fontSize: FS.lg, marginBottom: 10 }}>{latestFutuTradeDate || 'No Futu transactions imported yet'}</div>
             <div style={{ marginBottom: 10 }}>
               <div style={{ ...s.label, marginBottom: 4 }}>Futu Price Mode</div>
               <select
@@ -2060,7 +2858,7 @@ export default function TransactionsTab({
                 <option value="after_price">After-Hours</option>
                 <option value="overnight_price">Overnight</option>
               </select>
-              <div style={{ fontSize: 10, opacity: 0.45, marginTop: 4, lineHeight: 1.5 }}>
+              <div style={{ fontSize: FS.lg, opacity: 0.45, marginTop: 4, lineHeight: 1.5 }}>
                 `Live` uses `last_price`. `Market Close` uses daily K-line `close`. `Pre-Market`, `After-Hours`, and `Overnight` use the matching Futu quote fields.
               </div>
             </div>
@@ -2072,7 +2870,7 @@ export default function TransactionsTab({
                     {futuImporting ? 'Refreshing Transactions…' : 'Refresh Transactions'}
                   </span>
                 </button>
-                <div style={{ fontSize: 10, opacity: 0.45 }}>
+                <div style={{ fontSize: FS.lg, opacity: 0.45 }}>
                   {formatRemoteRequestMeta(
                     FUTU_REQUEST_TYPES.transactions,
                     lastFutuTransactionsRefreshAt,
@@ -2087,7 +2885,7 @@ export default function TransactionsTab({
                     {priceLoading ? 'Refreshing…' : 'Refresh Futu Prices'}
                   </span>
                 </button>
-                <div style={{ fontSize: 10, opacity: 0.45 }}>
+                <div style={{ fontSize: FS.lg, opacity: 0.45 }}>
                   {formatRemoteRequestMeta(
                     FUTU_REQUEST_TYPES.prices,
                     lastFutuPriceRefreshAt,
@@ -2113,47 +2911,26 @@ export default function TransactionsTab({
                     {futuSummaryLoading ? 'Refreshing Summary…' : 'Refresh Futu P&L'}
                   </span>
                 </button>
-                <div style={{ fontSize: 10, opacity: 0.45 }}>
+                <div style={{ fontSize: FS.lg, opacity: 0.45 }}>
                   {formatRemoteRequestMeta(
                     FUTU_REQUEST_TYPES.summary,
                     futuAccountSummary?.updated_at,
                     futuAccountSummary?.updated_at ? `Last updated ${new Date(futuAccountSummary.updated_at).toLocaleString()} · ${fmt(futuAccountSummary.open_positions, 0)} open positions` : 'Not refreshed yet'
                   )}
                 </div>
-                <div style={{ fontSize: 10, opacity: 0.45, maxWidth: 300, lineHeight: 1.5 }}>
+                <div style={{ fontSize: FS.lg, opacity: 0.45, maxWidth: 300, lineHeight: 1.5 }}>
                   Uses Futu account snapshot values from the local bridge (`market_val` and `pl_val` from positions). These may stay on market-close or broker reference pricing after hours even when live quotes refresh later.
                 </div>
               </div>
             </div>
-            <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, background: '#fff7ed', color: '#9a3412', fontSize: 12, lineHeight: 1.6, fontWeight: 700 }}>
+            <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, background: '#fff7ed', color: '#9a3412', fontSize: FS.lg, lineHeight: 1.6, fontWeight: 700 }}>
               Start `start_futu_bridge.bat` on your Windows computer first. That now launches both the local Futu bridge and the remote listener that processes queued Android refresh requests.
             </div>
           </div>
 
           <div style={s.card}>
-            <div style={{ ...s.label, marginBottom: 10 }}>CSV Tools</div>
-            <div style={{ fontSize: 12, opacity: 0.55, marginBottom: 10, lineHeight: 1.6 }}>
-              Use these when you want to manually edit data in a spreadsheet and import it back. These are separate from the Futu sync.
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button onClick={exportToFile} style={s.btn(false)} disabled={txns.length === 0}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <Download size={12} />
-                  Export CSV
-                </span>
-              </button>
-              <button onClick={() => importRef.current?.click()} style={s.btn(false)} disabled={importing}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <Upload size={12} />
-                  {importing ? 'Importing…' : 'Replace from CSV'}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div style={s.card}>
             <div style={{ ...s.label, marginBottom: 10 }}>Price Tools</div>
-            <div style={{ fontSize: 12, opacity: 0.55, marginBottom: 10, lineHeight: 1.6 }}>
+            <div style={{ fontSize: FS.lg, opacity: 0.55, marginBottom: 10, lineHeight: 1.6 }}>
               Refresh current prices for open positions on the P&amp;L page using Grok.
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -2164,7 +2941,7 @@ export default function TransactionsTab({
                     {priceLoading ? 'Refreshing…' : 'Refresh via Grok'}
                   </span>
                 </button>
-                <div style={{ fontSize: 10, opacity: 0.45 }}>
+                <div style={{ fontSize: FS.lg, opacity: 0.45 }}>
                   {lastGrokPriceRefreshAt ? `Last updated ${new Date(lastGrokPriceRefreshAt).toLocaleString()}` : 'Not refreshed yet'}
                 </div>
               </div>
@@ -2173,7 +2950,7 @@ export default function TransactionsTab({
 
           <div style={s.card}>
             <div style={{ ...s.label, marginBottom: 10 }}>Formula Notes</div>
-            <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.8 }}>
+            <div style={{ fontSize: FS.lg, opacity: 0.6, lineHeight: 1.8 }}>
               <div>`Total Open Cost Basis = Sum of current open-position cost bases`</div>
               <div>`Total Market Value = Sum of current open-position market values`</div>
               <div>`Total Unrealised P&L = Total Market Value - Total Open Cost Basis`</div>
@@ -2188,24 +2965,6 @@ export default function TransactionsTab({
 
       {activeView !== 'pnl' && activeView !== 'settings' && (
         <>
-          <div style={{ ...s.card, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, textAlign: 'center' }}>
-            <div>
-              <div style={{ ...s.label, marginBottom: 2 }}>Bought</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#16a34a', fontFamily: MONO }}>{fmt(buys)}</div>
-            </div>
-            <div>
-              <div style={{ ...s.label, marginBottom: 2 }}>Sold</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#dc2626', fontFamily: MONO }}>{fmt(sells)}</div>
-            </div>
-            <div>
-              <div style={{ ...s.label, marginBottom: 2 }}>Dividends</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#2563eb', fontFamily: MONO }}>{fmt(divs)}</div>
-            </div>
-            <div>
-              <div style={{ ...s.label, marginBottom: 2 }}>Net Cash</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#1a1a1a', fontFamily: MONO }}>{fmt(deposits - withdrawals)}</div>
-            </div>
-          </div>
 
           <div style={{ marginBottom: 8, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {filterAccounts.map((account) => (
@@ -2215,7 +2974,7 @@ export default function TransactionsTab({
             ))}
           </div>
 
-          <div style={{ marginBottom: 14, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          <div style={{ marginBottom: 8, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {typeOptions.map((type) => (
               <button key={type} onClick={() => setTypeFilter(type)} style={s.pill(typeFilter === type)}>
                 {type}
@@ -2223,101 +2982,99 @@ export default function TransactionsTab({
             ))}
           </div>
 
-          {loading ? (
-            <div style={{ textAlign: 'center', opacity: 0.35, padding: 40, fontSize: 12 }}>Loading…</div>
-          ) : months.length === 0 ? (
-            <div style={{ textAlign: 'center', opacity: 0.35, padding: 40, fontSize: 12 }}>No transactions</div>
-          ) : months.map((month) => (
-            <div key={month} style={s.card}>
-              <div style={{ ...s.label, marginBottom: 10 }}>{month}</div>
-              {grouped[month].map((t) => {
-                const tc = TYPE_COLORS[t.type] || TYPE_COLORS.OTHER;
-                return (
-                  <div key={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 0', borderBottom: '1px solid #f5f5f0' }}>
-                    <div style={{ width: 72, flexShrink: 0 }}>
-                      <div style={{ fontSize: 9, opacity: 0.4, fontFamily: MONO, letterSpacing: '0.02em' }}>{t.transaction_date?.slice(5)}</div>
-                      <div style={{ fontSize: 9, padding: '1px 5px', borderRadius: 4, background: tc.bg, color: tc.text, fontFamily: MONO, fontWeight: 700, display: 'inline-block', marginTop: 2, letterSpacing: '0.04em' }}>
-                        {t.type}
-                      </div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-                        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 12 }}>{t.ticker || t.name || '—'}</span>
-                        {t.ticker && t.name && t.name !== t.ticker && (
-                          <span style={{ fontSize: 10, opacity: 0.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-                        )}
-                      </div>
-                      {SECURITY_TYPES.has(t.type) && t.type !== 'DIVIDEND' && t.quantity != null && (
-                        <div style={{ fontSize: 10, opacity: 0.45, fontFamily: MONO }}>
-                          {splitFromRow(t) !== 1
-                            ? `${fmt(originalQtyFromRow(t), 0)} x ${fmt(splitFromRow(t), 2)} = ${fmt(adjustedQtyFromRow(t), 0)} @ ${fmt(t.price, 2)}`
-                            : `${fmt(adjustedQtyFromRow(t), 0)} @ ${fmt(t.price, 2)}`}
-                        </div>
-                      )}
-                      {t.type === 'DIVIDEND' && t.tax_withheld != null && (
-                        <div style={{ fontSize: 10, opacity: 0.45, fontFamily: MONO }}>tax {fmt(t.tax_withheld, 2)} {t.currency}</div>
-                      )}
-                      {CASH_TYPES.has(t.type) && t.notes && (
-                        <div style={{ fontSize: 10, opacity: 0.45, fontFamily: MONO }}>{t.notes}</div>
-                      )}
-                      <div style={{ fontSize: 9, opacity: 0.3 }}>{t.account}{t.order_ref ? ` · ${t.order_ref}` : ''}</div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 12 }}>{t.currency} {fmt(Math.abs(t.amount || 0), 2)}</div>
-                      <button onClick={() => deleteTxn(t.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', opacity: 0.2, padding: '2px', marginTop: 2, display: 'block', marginLeft: 'auto' }}>
-                        <X size={10} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+          <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <select
+              value={tickerFilter}
+              onChange={(e) => setTickerFilter(e.target.value)}
+              style={{ ...s.input, width: 'auto', minWidth: 120, maxWidth: 200, padding: '6px 10px' }}
+            >
+              {tickerOptions.map((t) => (
+                <option key={t} value={t}>{t === 'All' ? 'All stocks' : t}</option>
+              ))}
+            </select>
+            {tickerFilter !== 'All' && (
+              <button onClick={() => setTickerFilter('All')} style={s.pill(false)}>✕ Clear</button>
+            )}
+          </div>
+
+          <UnifiedDataTable
+            title="Transactions"
+            subtitle={`${filtered.length} row${filtered.length === 1 ? '' : 's'} · Tap a heading to sort`}
+            columns={ledgerColumns}
+            sections={ledgerSections}
+            rowKey={(row) => row.id}
+            sort={txnSort}
+            onSort={toggleTxnSort}
+            loading={loading}
+            empty="No transactions"
+            onSettings={() => showToast?.('Table settings coming soon')}
+          />
         </>
       )}
 
       {activeView === 'pnl' && (
         <>
-          {bankPnlRows.length > 0 && (
+          {!pnlTableOnly && bankPnlRows.length > 0 && (
             <div style={{ display: 'grid', gap: 10, marginBottom: 10 }}>
               <div style={{ ...s.card, padding: '14px 16px' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Total</div>
-                <div style={{ display: 'grid', gap: 10 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
-                    <div>
-                      <div style={{ ...s.label, marginBottom: 2 }}>Total Market Value</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.marketValue >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.marketValue)}</div>
+                <div style={{ fontSize: FS.lg, fontWeight: 700, marginBottom: 10 }}>Total</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 12 }}>
+                  {periodPnlSummary.map((metric) => {
+                    const color = metric.value == null || roundsToZero(metric.value, 0) ? CLAY.textLt : metric.value > 0 ? CLAY.green : CLAY.red;
+                    return (
+                      <div key={metric.label} style={{ background: CLAY.surf2, borderRadius: 12, padding: '9px 10px', minWidth: 0 }}>
+                        <div style={{ ...s.label, marginBottom: 3 }}>{metric.label}</div>
+                        <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.15, color }}>{metric.value == null ? '—' : fmtSigned(metric.value, 0)}</div>
+                        <div style={{ fontWeight: 700, fontSize: FS.compact, lineHeight: 1.15, color }}>{fmtPct(metric.pct, 2)}</div>
+                        <div style={{ fontSize: FS.compact, color: CLAY.textLt, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {metric.anchorLabel}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
+                  <div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ ...s.label, marginBottom: 2 }}>Unrealised P&amp;L</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.unrealized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.unrealized)}</div>
                     </div>
-                    <div>
-                      <div style={{ ...s.label, marginBottom: 2 }}>Total Cash</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.cash >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.cash)}</div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ ...s.label, marginBottom: 2 }}>+ Realised P&amp;L</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.realized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.realized)}</div>
                     </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
-                    <div>
-                      <div style={{ ...s.label, marginBottom: 2 }}>Total Unrealised P&amp;L</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.unrealized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.unrealized)}</div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ ...s.label, marginBottom: 2 }}>+ Dividend</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.futuDividends >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.futuDividends)}</div>
                     </div>
-                    <div>
-                      <div style={{ ...s.label, marginBottom: 2 }}>Total Realised P&amp;L</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.realized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.realized)}</div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
-                    <div>
-                      <div style={{ ...s.label, marginBottom: 2 }}>Total Futu Dividends</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.futuDividends >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.futuDividends)}</div>
-                    </div>
-                    <div>
+                    <div style={{ height: 1, background: '#d6d3d1', marginBottom: 8 }} />
+                    <div style={{ marginBottom: 8 }}>
                       <div style={{ ...s.label, marginBottom: 2 }}>Total P&amp;L</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.totalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.totalPnl)}</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.totalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.totalPnl)}</div>
                     </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
-                    <div />
                     <div>
                       <div style={{ ...s.label, marginBottom: 2 }}>Revised Total P&amp;L</div>
-                      <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: totalPnlSummary.revisedTotalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.revisedTotalPnl)}</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.revisedTotalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.revisedTotalPnl)}</div>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ ...s.label, marginBottom: 2 }}>Market Value</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.marketValue >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.marketValue)}</div>
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ ...s.label, marginBottom: 2 }}>Cash</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.cash >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(totalPnlSummary.cash)}</div>
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ ...s.label, marginBottom: 2 }}>Cash Invested</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: CLAY.text }}>{fmtSigned(totalPnlSummary.cashInvested)}</div>
+                    </div>
+                    <div>
+                      <div style={{ ...s.label, marginBottom: 2 }}>% Total P&amp;L</div>
+                      <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: totalPnlSummary.totalPnl >= 0 ? '#16a34a' : '#dc2626' }}>
+                        {totalPnlSummary.cashInvested !== 0 ? `${(totalPnlSummary.totalPnl / totalPnlSummary.cashInvested * 100).toFixed(2)}%` : '—'}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2326,8 +3083,8 @@ export default function TransactionsTab({
               {bankPnlRows.map((row) => (
                 <div key={row.bank} style={{ ...s.card, padding: '14px 16px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700 }}>{row.bank}</span>
-                    <span style={{ fontSize: 10, opacity: 0.45 }}>{fmt(row.openPositions, 0)} open position{row.openPositions === 1 ? '' : 's'}</span>
+                    <span style={{ fontSize: FS.lg, fontWeight: 700 }}>{row.bank}</span>
+                    <span style={{ fontSize: FS.lg, opacity: 0.45 }}>{fmt(row.openPositions, 0)} open position{row.openPositions === 1 ? '' : 's'}</span>
                   </div>
                   <div style={{ display: 'grid', gap: 10 }}>
                     {row.bank === 'Futubull' ? (
@@ -2335,12 +3092,12 @@ export default function TransactionsTab({
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Total Market Value</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.marketValue >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.marketValue)}</div>
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.marketValue >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.marketValue)}</div>
                           </div>
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Futu API Market Value</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: (row.futuApiMarketValue ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
-                              {row.futuApiMarketValue == null ? '—' : `${row.futuApiCurrency} ${fmt(row.futuApiMarketValue, 2)}`}
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: (row.futuApiMarketValue ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
+                              {row.futuApiMarketValue == null ? '—' : `${row.futuApiCurrency} ${fmt(row.futuApiMarketValue, 0)}`}
                             </div>
                           </div>
                         </div>
@@ -2348,7 +3105,7 @@ export default function TransactionsTab({
                     ) : (
                       <div style={{ padding: '0 12px' }}>
                         <div style={{ ...s.label, marginBottom: 2 }}>Total Market Value</div>
-                        <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.marketValue >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.marketValue)}</div>
+                        <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.marketValue >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.marketValue)}</div>
                       </div>
                     )}
 
@@ -2357,31 +3114,88 @@ export default function TransactionsTab({
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Futu API Cash</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2 }}>
-                              {row.futuApiCash == null ? '—' : `${row.futuApiCurrency} ${fmt(row.futuApiCash, 2)}`}
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2 }}>
+                              {row.futuApiCash == null ? '—' : `${row.futuApiCurrency} ${fmt(row.futuApiCash, 0)}`}
                             </div>
                           </div>
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Futu API Total Assets</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2 }}>
-                              {row.futuApiTotalAssets == null ? '—' : `${row.futuApiCurrency} ${fmt(row.futuApiTotalAssets, 2)}`}
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2 }}>
+                              {row.futuApiTotalAssets == null ? '—' : `${row.futuApiCurrency} ${fmt(row.futuApiTotalAssets, 0)}`}
                             </div>
                           </div>
                         </div>
 
-                        <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 12px' }}>
+                        <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 12px', display: 'grid', gap: 10 }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                             <div>
                               <div style={{ ...s.label, marginBottom: 2 }}>Futu Derived Unrealised P&amp;L</div>
-                              <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.futuUnrealizedPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.futuUnrealizedPnl)}</div>
+                              <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.futuUnrealizedPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.futuUnrealizedPnl)}</div>
                             </div>
                             <div>
                               <div style={{ ...s.label, marginBottom: 2 }}>Futu API Total Position P&amp;L</div>
-                              <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: (row.futuApiTotalPositionPnl ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
-                                {row.futuApiTotalPositionPnl == null ? '—' : `${row.futuApiCurrency} ${fmtSigned(row.futuApiTotalPositionPnl, 2)}`}
+                              <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: (row.futuApiTotalPositionPnl ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
+                                {row.futuApiTotalPositionPnl == null ? '—' : `${row.futuApiCurrency} ${fmtSigned(row.futuApiTotalPositionPnl, 0)}`}
                               </div>
                             </div>
                           </div>
+                          <button
+                            onClick={() => setShowFutuUnrealisedBreakdown(v => !v)}
+                            style={{ ...s.btn(showFutuUnrealisedBreakdown), padding: '5px 10px', width: 'fit-content', fontSize: FS.compact }}
+                          >
+                            {showFutuUnrealisedBreakdown ? 'Hide breakdown' : 'Show breakdown'}
+                          </button>
+                          {showFutuUnrealisedBreakdown && (() => {
+                            const breakdown = positionRows
+                              .filter(p => normalizeBankLabel(p.account) === 'Futubull' && p.shares > 0)
+                              .map(p => {
+                                const mv = p.marketValue || 0;
+                                const netCost = p.investedCost || 0; // shares × avgCost = actual cost basis of remaining shares
+                                const divs = p.dividends || 0;
+                                const adjCost = netCost - divs;
+                                const futuAvgCost = p.shares > 0 ? adjCost / p.shares : 0;
+                                return { ticker: p.ticker, shares: p.shares, futuAvgCost, currentPrice: p.currentPrice, marketValue: mv, netOpenCost: netCost, dividends: divs, adjCost, unrealisedPnl: mv - adjCost };
+                              })
+                              .sort((a, b) => b.marketValue - a.marketValue);
+                            return (
+                              <div style={{ overflowX: 'auto', marginTop: 4 }}>
+                                <table style={{ ...tableStyle, width: '100%', minWidth: 'max-content' }}>
+                                  <thead>
+                                    <tr style={tableHeaderRowStyle}>
+                                      {['Ticker', 'Shares', 'Futu Avg Cost', 'Price', 'Market Value', 'Net Open Cost', '− Dividends', 'Adj. Cost', 'Unrealised P&L'].map(h => (
+                                        <th key={h} style={tableHeaderCellStyle({ align: h === 'Ticker' ? 'left' : 'right', padding: '4px 8px' })}>{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {breakdown.map(p => (
+                                      <tr key={p.ticker} style={tableRowStyle}>
+                                        <td style={tableCellStyle({ padding: '5px 8px', emphasis: true })}>{p.ticker}</td>
+                                        <td style={tableCellStyle({ align: 'right', padding: '5px 8px' })}>{fmt(p.shares, 4).replace(/\.?0+$/, '')}</td>
+                                        <td style={tableCellStyle({ align: 'right', padding: '5px 8px' })}>{fmt(p.futuAvgCost, 2)}</td>
+                                        <td style={tableCellStyle({ align: 'right', padding: '5px 8px' })}>{p.currentPrice != null ? fmt(p.currentPrice, 2) : '—'}</td>
+                                        <td style={tableCellStyle({ align: 'right', padding: '5px 8px' })}>{fmt(p.marketValue, 0)}</td>
+                                        <td style={{ ...tableCellStyle({ align: 'right', padding: '5px 8px' }), color: CLAY.textMid }}>{fmt(p.netOpenCost, 0)}</td>
+                                        <td style={{ ...tableCellStyle({ align: 'right', padding: '5px 8px' }), color: CLAY.green }}>{p.dividends > 0 ? fmt(p.dividends, 0) : '—'}</td>
+                                        <td style={tableCellStyle({ align: 'right', padding: '5px 8px' })}>{fmt(p.adjCost, 0)}</td>
+                                        <td style={{ ...tableCellStyle({ align: 'right', padding: '5px 8px', emphasis: true }), color: p.unrealisedPnl >= 0 ? CLAY.green : CLAY.red }}>{fmtSigned(p.unrealisedPnl)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr style={{ borderTop: `2px solid ${CLAY.surf2}` }}>
+                                      <td colSpan={4} style={{ ...tableCellStyle({ padding: '5px 8px', emphasis: true }), color: CLAY.textMid }}>Total</td>
+                                      <td style={tableCellStyle({ align: 'right', padding: '5px 8px', emphasis: true })}>{fmt(breakdown.reduce((s, p) => s + p.marketValue, 0), 0)}</td>
+                                      <td style={{ ...tableCellStyle({ align: 'right', padding: '5px 8px', emphasis: true }), color: CLAY.textMid }}>{fmt(breakdown.reduce((s, p) => s + p.netOpenCost, 0), 0)}</td>
+                                      <td style={{ ...tableCellStyle({ align: 'right', padding: '5px 8px', emphasis: true }), color: CLAY.green }}>{fmt(breakdown.reduce((s, p) => s + p.dividends, 0), 0)}</td>
+                                      <td style={tableCellStyle({ align: 'right', padding: '5px 8px', emphasis: true })}>{fmt(breakdown.reduce((s, p) => s + p.adjCost, 0), 0)}</td>
+                                      <td style={{ ...tableCellStyle({ align: 'right', padding: '5px 8px', emphasis: true }), color: row.futuUnrealizedPnl >= 0 ? CLAY.green : CLAY.red }}>{fmtSigned(row.futuUnrealizedPnl)}</td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </>
                     )}
@@ -2389,8 +3203,8 @@ export default function TransactionsTab({
                     {row.bank === 'HSBC' && (
                       <div style={{ padding: '0 12px' }}>
                         <div style={{ ...s.label, marginBottom: 2 }}>USD</div>
-                        <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2 }}>
-                          {row.financeCashCurrency} {fmt(row.financeCash, 2)}
+                        <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2 }}>
+                          {row.financeCashCurrency} {fmt(row.financeCash, 0)}
                         </div>
                       </div>
                     )}
@@ -2398,22 +3212,22 @@ export default function TransactionsTab({
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
                       <div>
                         <div style={{ ...s.label, marginBottom: 2 }}>Total Unrealised P&amp;L</div>
-                        <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.unrealized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.unrealized)}</div>
+                        <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.unrealized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.unrealized)}</div>
                       </div>
                         <div>
                           <div style={{ ...s.label, marginBottom: 2 }}>Total Realised P&amp;L</div>
-                          <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.realized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.realized)}</div>
+                          <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.realized >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.realized)}</div>
                         </div>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px' }}>
                       <div>
                         <div style={{ ...s.label, marginBottom: 2 }}>Total Dividends</div>
-                        <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.dividends >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.dividends)}</div>
+                        <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.dividends >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.dividends)}</div>
                       </div>
                       <div>
                         <div style={{ ...s.label, marginBottom: 2 }}>Total P&amp;L</div>
-                        <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, color: row.totalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.totalPnl)}</div>
+                        <div style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.2, color: row.totalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.totalPnl)}</div>
                       </div>
                     </div>
 
@@ -2429,11 +3243,11 @@ export default function TransactionsTab({
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Cash In</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, color: '#2563eb' }}>{fmtSigned(row.cashIn)}</div>
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, color: '#2563eb' }}>{fmtSigned(row.cashIn)}</div>
                           </div>
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Cash Out</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, color: '#b45309' }}>{fmtSigned(row.cashOut)}</div>
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, color: '#b45309' }}>{fmtSigned(row.cashOut)}</div>
                           </div>
                         </div>
 
@@ -2441,17 +3255,17 @@ export default function TransactionsTab({
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                             <div>
                               <div style={{ ...s.label, marginBottom: 2 }}>Total Open Cost Basis</div>
-                              <div style={{ fontWeight: 700, fontSize: 12, color: '#2563eb' }}>{fmtSigned(row.openCost)}</div>
+                              <div style={{ fontWeight: 700, fontSize: FS.lg, color: '#2563eb' }}>{fmtSigned(row.openCost)}</div>
                             </div>
                             <div>
                               <div style={{ ...s.label, marginBottom: 2 }}>Futu Derived Diluted Open Cost Basis</div>
-                              <div style={{ fontWeight: 700, fontSize: 12, color: '#2563eb' }}>{fmtSigned(row.futuDilutedOpenCostBasis)}</div>
+                              <div style={{ fontWeight: 700, fontSize: FS.lg, color: '#2563eb' }}>{fmtSigned(row.futuDilutedOpenCostBasis)}</div>
                             </div>
                           </div>
                         ) : (
                           <div>
                             <div style={{ ...s.label, marginBottom: 2 }}>Total Open Cost Basis</div>
-                            <div style={{ fontWeight: 700, fontSize: 12, color: '#2563eb' }}>{fmtSigned(row.openCost)}</div>
+                            <div style={{ fontWeight: 700, fontSize: FS.lg, color: '#2563eb' }}>{fmtSigned(row.openCost)}</div>
                           </div>
                         )}
 
@@ -2475,7 +3289,7 @@ export default function TransactionsTab({
 
                         <div>
                           <div style={{ ...s.label, marginBottom: 2 }}>Revised Total P&amp;L</div>
-                          <div style={{ fontWeight: 700, fontSize: 12, color: row.revisedTotalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.revisedTotalPnl)}</div>
+                          <div style={{ fontWeight: 700, fontSize: FS.lg, color: row.revisedTotalPnl >= 0 ? '#16a34a' : '#dc2626' }}>{fmtSigned(row.revisedTotalPnl)}</div>
                         </div>
                       </div>
                     )}
@@ -2485,39 +3299,52 @@ export default function TransactionsTab({
             </div>
           )}
 
-          {priceStatus && (priceLoading || /failed/i.test(priceStatus)) && (
-            <div style={{ ...s.card, background: '#f8fafc', color: '#334155', fontSize: 12, lineHeight: 1.6 }}>
+          {!pnlTableOnly && priceStatus && (priceLoading || /failed/i.test(priceStatus)) && (
+            <div style={{ ...s.card, background: '#f8fafc', color: '#334155', fontSize: FS.lg, lineHeight: 1.6 }}>
               <div><strong>Status:</strong> {priceStatus || 'Idle'}</div>
             </div>
           )}
 
-          {openPnlRows.length === 0 ? (
-            <div style={{ textAlign: 'center', opacity: 0.35, padding: 40, fontSize: 12 }}>No securities to calculate</div>
+          {!hidePnlTable && (
+            <UnifiedDataTable
+              title="P&L"
+              subtitle={`${sortedPnlRows.length} open position${sortedPnlRows.length === 1 ? '' : 's'} · Tap a heading to sort · ${pnlSortLabel} ${pnlSort.direction === 'desc' ? 'high to low' : 'low to high'}`}
+              columns={pnlTableColumns}
+              rows={sortedPnlRows}
+              rowKey={(row) => row.ticker}
+              sort={pnlSort}
+              onSort={togglePnlSort}
+              rowExtra={renderPnlTableExtra}
+              loading={loading}
+              empty="No securities to calculate"
+              onSettings={() => setShowPnlSettings((value) => !value)}
+              settingsOpen={pnlTableOnly && showPnlSettings}
+              settingsPanel={pnlTableSettingsPanel}
+            />
+          )}
+
+          {false && (openPnlRows.length === 0 ? (
+            <div style={{ textAlign: 'center', opacity: 0.35, padding: 40, fontSize: FS.lg }}>No securities to calculate</div>
           ) : (
-            <div style={{ ...s.card, padding: 0, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 12px 0' }}>
-                <button onClick={() => scrollPnlTable(-1)} style={{ ...s.btn(false), padding: '5px 10px', minWidth: 0 }}>
-                  ←
-                </button>
-                <button onClick={() => scrollPnlTable(1)} style={{ ...s.btn(false), padding: '5px 10px', minWidth: 0 }}>
-                  →
-                </button>
-              </div>
-              <div ref={pnlTableScrollRef} style={{ overflowX: 'auto', paddingTop: 8 }}>
-                <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: 'max-content', tableLayout: 'fixed' }}>
+            <DataTableCard
+              title="P&L"
+              subtitle={`${sortedPnlRows.length} open position${sortedPnlRows.length === 1 ? '' : 's'} · Tap a heading to sort · ${pnlSortLabel} ${pnlSort.direction === 'desc' ? 'high to low' : 'low to high'}`}
+              onSettings={() => setShowPnlSettings((value) => !value)}
+            >
+                <table style={tableStyle}>
                   <colgroup>
-                    <col style={{ width: 58 }} />
-                    <col style={{ width: 57 }} />
-                    <col style={{ width: 46 }} />
-                    <col style={{ width: 47 }} />
-                    <col style={{ width: 44 }} />
-                    <col style={{ width: 40 }} />
-                    <col style={{ width: 44 }} />
-                    <col style={{ width: 50 }} />
-                    <col style={{ width: 36 }} />
+                    <col style={tableColumnStyle({ width: 78, min: 68, maxVw: 25 })} />
+                    <col style={tableColumnStyle({ width: 96, min: 82, maxVw: 24 })} />
+                    <col style={tableColumnStyle({ width: 74, min: 66, maxVw: 18 })} />
+                    <col style={tableColumnStyle({ width: 108, min: 94, maxVw: 24 })} />
+                    <col style={tableColumnStyle({ width: 82, min: 72, maxVw: 20 })} />
+                    <col style={tableColumnStyle({ width: 88, min: 76, maxVw: 22 })} />
+                    <col style={tableColumnStyle({ width: 80, min: 70, maxVw: 20 })} />
+                    <col style={tableColumnStyle({ width: 78, min: 68, maxVw: 20 })} />
+                    <col style={tableColumnStyle({ width: 48, min: 44, maxVw: 14 })} />
                   </colgroup>
                   <thead>
-                    <tr style={{ background: '#fafaf8' }}>
+                    <tr style={tableHeaderRowStyle}>
                       {[
                         { top: 'Stock', bottom: '', sortKey: 'ticker' },
                         { top: 'Market Value', bottom: 'Shares', sortKey: 'marketValue' },
@@ -2532,50 +3359,18 @@ export default function TransactionsTab({
                         <th
                           key={`${label.top}-${label.bottom}`}
                           style={{
-                            ...s.label,
-                            textAlign: 'left',
-                            padding: '5px 4px',
-                            borderBottom: '1px solid #ece7df',
-                            fontSize: 10,
+                            ...tableHeaderCellStyle({ sticky: index === 0, align: 'center', padding: index === 0 ? '7px 4px 7px 10px' : '7px 6px' }),
                             lineHeight: 1.2,
-                            opacity: 1,
-                            color: '#111827',
-                            position: index === 0 ? 'sticky' : 'static',
-                            left: index === 0 ? 0 : 'auto',
-                            zIndex: index === 0 ? 3 : 1,
-                            background: '#fafaf8',
+                            whiteSpace: 'normal',
                           }}
                         >
-                          <button
-                            onClick={() => togglePnlSort(label.sortKey)}
-                            style={{
-                              all: 'unset',
-                              cursor: 'pointer',
-                              display: 'grid',
-                              gap: 2,
-                              width: '100%',
-                            }}
-                          >
-                            {label.bottom ? (
-                              <>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                                  <span>{label.top}</span>
-                                  <span style={{ opacity: pnlSort.key === label.sortKey ? 1 : 0.28 }}>
-                                    {pnlSort.key === label.sortKey ? (pnlSort.direction === 'desc' ? '▼' : '▲') : '↕'}
-                                  </span>
-                                </div>
-                                <div style={{ height: 1, background: '#d6d3d1', width: '100%' }} />
-                                <div>{label.bottom}</div>
-                              </>
-                            ) : (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                                <span>{label.top}</span>
-                                <span style={{ opacity: pnlSort.key === label.sortKey ? 1 : 0.28 }}>
-                                  {pnlSort.key === label.sortKey ? (pnlSort.direction === 'desc' ? '▼' : '▲') : '↕'}
-                                </span>
-                              </div>
-                            )}
-                          </button>
+                          <DataTableHeaderLabel
+                            top={label.top}
+                            bottom={label.bottom}
+                            sortKey={label.sortKey}
+                            sort={pnlSort}
+                            onSort={togglePnlSort}
+                          />
                         </th>
                       ))}
                     </tr>
@@ -2585,34 +3380,26 @@ export default function TransactionsTab({
                       const totalPnlPct = row.totalPnlPct;
                       const unrealizedPct = row.unrealizedPct;
                       const portfolioPct = row.portfolioPct;
-                      const totalPnlColor = row.totalPnl >= 0 ? '#16a34a' : '#dc2626';
-                      const unrealizedColor = (row.unrealizedPnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-                      const realizedColor = row.realizedPnl >= 0 ? '#16a34a' : '#dc2626';
+                      const totalPnlColor = row.totalPnl >= 0 ? CLAY.green : CLAY.red;
+                      const unrealizedColor = (row.unrealizedPnl || 0) >= 0 ? CLAY.green : CLAY.red;
+                      const realizedColor = row.realizedPnl >= 0 ? CLAY.green : CLAY.red;
                       const isExpanded = expandedPnlTicker === row.ticker;
                       const bankBreakdownRows = pnlBreakdownByTicker.get(row.ticker) || [];
                       return (
                         <React.Fragment key={row.ticker}>
-                          <tr style={{ borderBottom: isExpanded ? 'none' : '1px solid #f1ede5' }}>
+                          <tr style={isExpanded ? {} : tableRowStyle}>
                             <td
-                              style={{
-                                padding: '5px 4px',
-                                verticalAlign: 'middle',
-                                position: 'sticky',
-                                left: 0,
-                                background: '#fff',
-                                zIndex: 2,
-                                boxShadow: '8px 0 14px -12px rgba(15,23,42,0.22)',
-                              }}
+                              style={tableCellStyle({ sticky: true, padding: '7px 4px 7px 10px', emphasis: true, nowrap: false })}
                             >
                               <button
                                 onClick={() => togglePnlTickerBreakdown(row.ticker)}
                                 style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}
                               >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <span style={{ fontWeight: 700, fontSize: 10, lineHeight: 1.15 }}>{row.ticker}</span>
-                                  <span style={{ fontSize: 9, opacity: 0.4 }}>{isExpanded ? '▾' : '▸'}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                  <span style={{ fontWeight: 700, fontSize: FS.lg, lineHeight: 1.15 }}>{row.ticker}</span>
+                                  <span style={{ fontSize: FS.lg, opacity: 0.4 }}>{isExpanded ? '▾' : '▸'}</span>
                                 </div>
-                                <div style={{ fontSize: 10, opacity: 0.45, marginTop: 2, lineHeight: 1.1, whiteSpace: 'pre-line' }}>
+                                <div style={{ fontSize: FS.lg, opacity: 0.45, marginTop: 2, lineHeight: 1.1, whiteSpace: 'pre-line', textAlign: 'center' }}>
                                   {String(row.account || '')
                                     .replace(/Futu HK/g, 'Futu')
                                     .replace(/\s*\+\s*/g, '\n')
@@ -2620,15 +3407,15 @@ export default function TransactionsTab({
                                 </div>
                               </button>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, color: '#111827', lineHeight: 1.2, fontSize: 10, whiteSpace: 'nowrap' }}>{fmt(row.marketValue, 0)}</div>
-                              <div style={{ marginTop: 2, fontSize: 10, opacity: 0.55, lineHeight: 1.1 }}>{fmt(row.shares, 0)}</div>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.2, fontSize: FS.lg, whiteSpace: 'nowrap', textAlign: 'center' }}>{fmt(row.marketValue, 0)}</div>
+                              <div style={{ marginTop: 2, fontSize: FS.lg, opacity: 0.55, lineHeight: 1.1, textAlign: 'center' }}>{fmt(row.shares, 0)}</div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
                               <input
                                 type="number"
                                 step="0.01"
-                                value={Object.prototype.hasOwnProperty.call(manualPriceDrafts, row.ticker) ? manualPriceDrafts[row.ticker] : (row.currentPrice ?? '')}
+                                value={Object.prototype.hasOwnProperty.call(manualPriceDrafts, row.ticker) ? manualPriceDrafts[row.ticker] : fmtInputPrice(row.currentPrice)}
                                 onChange={(e) => {
                                   const val = e.target.value;
                                   setManualPriceDrafts((prev) => ({
@@ -2658,37 +3445,37 @@ export default function TransactionsTab({
                                     e.currentTarget.blur();
                                   }
                                 }}
-                                style={{ ...s.input, width: '40%', minWidth: 40, maxWidth: 54, padding: '3px 5px', height: 'auto', fontSize: 10 }}
+                                style={{ ...s.input, width: '100%', minWidth: 0, maxWidth: '100%', padding: '3px 5px', height: 'auto', fontSize: FS.lg, textAlign: 'center' }}
                               />
-                              <div style={{ marginTop: 2, fontSize: 10, opacity: 0.55, lineHeight: 1.1 }}>{fmt(row.avgCost, 2)}</div>
+                              <div style={{ marginTop: 2, fontSize: FS.lg, opacity: 0.55, lineHeight: 1.1, textAlign: 'center' }}>{fmt(row.avgCost, 2)}</div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, color: unrealizedColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.unrealizedPnl, 0)}</div>
-                              <div style={{ marginTop: 2, fontSize: 10, color: unrealizedColor, lineHeight: 1.1 }}>{fmtPct(unrealizedPct, 2)}</div>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, color: unrealizedColor, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtSigned(row.unrealizedPnl, 0)}</div>
+                              <div style={{ marginTop: 2, fontSize: FS.lg, color: unrealizedColor, lineHeight: 1.1, textAlign: 'center' }}>{fmtPct(unrealizedPct, 2)}</div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, color: realizedColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.realizedPnl, 0)}</div>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, color: realizedColor, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtSigned(row.realizedPnl, 0)}</div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, color: totalPnlColor, lineHeight: 1.1, fontSize: 10 }}>{fmtSigned(row.totalPnl, 0)}</div>
-                              <div style={{ marginTop: 2, fontSize: 10, color: totalPnlColor, lineHeight: 1.1 }}>{fmtPct(totalPnlPct, 2)}</div>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, color: totalPnlColor, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtSigned(row.totalPnl, 0)}</div>
+                              <div style={{ marginTop: 2, fontSize: FS.lg, color: totalPnlColor, lineHeight: 1.1, textAlign: 'center' }}>{fmtPct(totalPnlPct, 2)}</div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, color: (row.dividends || 0) >= 0 ? '#16a34a' : '#dc2626', lineHeight: 1.1, fontSize: 10 }}>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, color: (row.dividends || 0) >= 0 ? CLAY.green : CLAY.red, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>
                                 {fmtSigned(row.dividends, 0)}
                               </div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, color: '#111827', lineHeight: 1.1, fontSize: 10, whiteSpace: 'nowrap' }}>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, color: CLAY.text, lineHeight: 1.1, fontSize: FS.lg, whiteSpace: 'nowrap', textAlign: 'center' }}>
                                 {fmt(row.investedCost, 0)}
                               </div>
                             </td>
-                            <td style={{ padding: '5px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ fontWeight: 700, lineHeight: 1.1, fontSize: 10 }}>{fmtPct(portfolioPct, 2)}</div>
+                            <td style={tableCellStyle({ align: 'center', padding: '7px 6px', nowrap: false })}>
+                              <div style={{ fontWeight: 700, lineHeight: 1.1, fontSize: FS.lg, textAlign: 'center' }}>{fmtPct(portfolioPct, 2)}</div>
                             </td>
                           </tr>
                           {isExpanded && bankBreakdownRows.length > 0 && (
-                            <tr style={{ borderBottom: '1px solid #f1ede5', background: '#fcfbf7' }}>
+                            <tr style={{ ...tableRowStyle, background: CLAY.surf2 }}>
                               <td colSpan={9} style={{ padding: '8px 10px 10px' }}>
                                 <div style={{ display: 'grid', gap: 6 }}>
                                   {bankBreakdownRows.map((bankRow) => {
@@ -2705,42 +3492,42 @@ export default function TransactionsTab({
                                           alignItems: 'center',
                                           padding: '8px 10px',
                                           borderRadius: 10,
-                                          background: '#fff',
-                                          border: '1px solid #ece7df',
+                                          background: CLAY.surface,
+                                          border: `1px solid ${CLAY.surf2}`,
                                         }}
                                       >
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Bank</div>
-                                          <div style={{ fontSize: 10, fontWeight: 700 }}>{String(bankRow.account || '').replace(/Futu HK/g, 'Futu')}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Bank</div>
+                                          <div style={{ fontSize: FS.lg, fontWeight: 700 }}>{String(bankRow.account || '').replace(/Futu HK/g, 'Futu')}</div>
                                         </div>
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Mkt / Shares</div>
-                                          <div style={{ fontSize: 10 }}>{fmt(bankRow.marketValue, 0)}</div>
-                                          <div style={{ fontSize: 10, opacity: 0.55 }}>{fmt(bankRow.shares, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Mkt / Shares</div>
+                                          <div style={{ fontSize: FS.lg }}>{fmt(bankRow.marketValue, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.55 }}>{fmt(bankRow.shares, 0)}</div>
                                         </div>
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Price / Cost</div>
-                                          <div style={{ fontSize: 10 }}>{fmt(bankRow.currentPrice, 2)}</div>
-                                          <div style={{ fontSize: 10, opacity: 0.55 }}>{fmt(bankRow.avgCost, 2)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Price / Cost</div>
+                                          <div style={{ fontSize: FS.lg }}>{fmt(bankRow.currentPrice, 2)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.55 }}>{fmt(bankRow.avgCost, 2)}</div>
                                         </div>
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Unreal.</div>
-                                          <div style={{ fontSize: 10, color: bankUnrealizedColor }}>{fmtSigned(bankRow.unrealizedPnl, 0)}</div>
-                                          <div style={{ fontSize: 10, color: bankUnrealizedColor, opacity: 0.75 }}>{fmtPct(bankRow.unrealizedPct, 2)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Unreal.</div>
+                                          <div style={{ fontSize: FS.lg, color: bankUnrealizedColor }}>{fmtSigned(bankRow.unrealizedPnl, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, color: bankUnrealizedColor, opacity: 0.75 }}>{fmtPct(bankRow.unrealizedPct, 2)}</div>
                                         </div>
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Realised</div>
-                                          <div style={{ fontSize: 10, color: bankRealizedColor }}>{fmtSigned(bankRow.realizedPnl, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Realised</div>
+                                          <div style={{ fontSize: FS.lg, color: bankRealizedColor }}>{fmtSigned(bankRow.realizedPnl, 0)}</div>
                                         </div>
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Total P&L</div>
-                                          <div style={{ fontSize: 10, color: bankTotalPnlColor }}>{fmtSigned(bankRow.totalPnl, 0)}</div>
-                                          <div style={{ fontSize: 10, color: bankTotalPnlColor, opacity: 0.75 }}>{fmtPct(bankRow.totalPnlPct, 2)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Total P&L</div>
+                                          <div style={{ fontSize: FS.lg, color: bankTotalPnlColor }}>{fmtSigned(bankRow.totalPnl, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, color: bankTotalPnlColor, opacity: 0.75 }}>{fmtPct(bankRow.totalPnlPct, 2)}</div>
                                         </div>
                                         <div>
-                                          <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 2 }}>Div / Cost</div>
-                                          <div style={{ fontSize: 10 }}>{fmtSigned(bankRow.dividends, 0)}</div>
-                                          <div style={{ fontSize: 10, opacity: 0.55 }}>{fmt(bankRow.investedCost, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.45, marginBottom: 2 }}>Div / Cost</div>
+                                          <div style={{ fontSize: FS.lg }}>{fmtSigned(bankRow.dividends, 0)}</div>
+                                          <div style={{ fontSize: FS.lg, opacity: 0.55 }}>{fmt(bankRow.investedCost, 0)}</div>
                                         </div>
                                       </div>
                                     );
@@ -2754,9 +3541,8 @@ export default function TransactionsTab({
                     })}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          )}
+            </DataTableCard>
+          ))}
         </>
       )}
 
@@ -2764,8 +3550,8 @@ export default function TransactionsTab({
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <div style={{ background: '#fff', borderRadius: '16px 16px 0 0', padding: 20, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>Add Transaction</div>
-              <button onClick={() => setShowAdd(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
+              <div style={{ fontWeight: 700, fontSize: FS.lg }}>{editingTxnId ? 'Edit Transaction' : 'Add Transaction'}</div>
+              <button onClick={closeTxnForm} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div style={{ gridColumn: '1/-1' }}>
@@ -2835,13 +3621,17 @@ export default function TransactionsTab({
                 </div>
               )}
               <div style={{ gridColumn: '1/-1' }}>
+                <div style={{ ...s.label, marginBottom: 4 }}>Order Ref</div>
+                <input style={s.input} value={newTxn.order_ref} onChange={(e) => setNewTxn((prev) => ({ ...prev, order_ref: e.target.value }))} placeholder="Optional order reference" />
+              </div>
+              <div style={{ gridColumn: '1/-1' }}>
                 <div style={{ ...s.label, marginBottom: 4 }}>Notes</div>
                 <input style={s.input} value={newTxn.notes} onChange={(e) => setNewTxn((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Optional note" />
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button onClick={() => setShowAdd(false)} style={{ ...s.btn(false), flex: 1 }}>Cancel</button>
-              <button onClick={saveTxn} style={{ ...s.btn(true), flex: 1 }}>Save</button>
+              <button onClick={closeTxnForm} style={{ ...s.btn(false), flex: 1 }}>Cancel</button>
+              <button onClick={saveTxn} style={{ ...s.btn(true), flex: 1 }}>{editingTxnId ? 'Update' : 'Save'}</button>
             </div>
           </div>
         </div>
@@ -2851,7 +3641,7 @@ export default function TransactionsTab({
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <div style={{ background: '#fff', borderRadius: '16px 16px 0 0', padding: 20, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>Paste Email / Statement</div>
+              <div style={{ fontWeight: 700, fontSize: FS.lg }}>Paste Email / Statement</div>
               <button
                 onClick={() => {
                   setShowPaste(false);
@@ -2867,7 +3657,7 @@ export default function TransactionsTab({
             {!pendingParsed ? (
               <>
                 <textarea style={{ ...s.input, height: 180, resize: 'vertical' }} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="Paste brokerage email or statement text here…" />
-                <div style={{ fontSize: 10, opacity: 0.4, marginTop: 4, marginBottom: 12 }}>
+                <div style={{ fontSize: FS.lg, opacity: 0.4, marginTop: 4, marginBottom: 12 }}>
                   Grok AI will extract transaction details automatically.
                   {!xaiKey && ' Set your xAI key in Finances tab first.'}
                 </div>
@@ -2881,16 +3671,16 @@ export default function TransactionsTab({
                 {pendingParsed.map((t, i) => {
                   const tc = TYPE_COLORS[t.type] || TYPE_COLORS.OTHER;
                   return (
-                    <div key={i} style={{ background: '#fafaf8', borderRadius: 8, padding: '8px 10px', marginBottom: 6, fontSize: 12, fontFamily: MONO }}>
+                    <div key={i} style={{ background: '#fafaf8', borderRadius: 8, padding: '8px 10px', marginBottom: 6, fontSize: FS.lg, fontFamily: MONO }}>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
-                        <span style={{ padding: '1px 5px', borderRadius: 4, background: tc.bg, color: tc.text, fontSize: 9, fontWeight: 700 }}>{t.type}</span>
+                        <span style={{ padding: '1px 5px', borderRadius: 4, background: tc.bg, color: tc.text, fontSize: FS.lg, fontWeight: 700 }}>{t.type}</span>
                         <strong>{t.ticker}</strong>
-                        <span style={{ opacity: 0.5, fontSize: 10 }}>{t.name}</span>
+                        <span style={{ opacity: 0.5, fontSize: FS.lg }}>{t.name}</span>
                       </div>
-                      <div style={{ opacity: 0.5, fontSize: 10 }}>
+                      <div style={{ opacity: 0.5, fontSize: FS.lg }}>
                         {t.transaction_date}
                         {t.quantity != null ? ` · ${fmt(t.quantity, 0)} @ ${fmt(t.price, 2)}` : ''}
-                        {` · ${t.currency} ${fmt(t.amount)}`}
+                        {` · ${t.currency} ${fmt(t.amount, 0)}`}
                         {t.account ? ` · ${t.account}` : ''}
                       </div>
                     </div>
