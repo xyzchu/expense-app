@@ -21,6 +21,21 @@ function localIsoDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function brisbaneIsoDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BRISBANE_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type) => parts.find(part => part.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function brisbaneDayStartIso(dateStr) {
+  return new Date(`${dateStr}T00:00:00+10:00`).toISOString();
+}
+
 function addDays(dateStr, days) {
   const date = new Date(`${dateStr}T00:00:00`);
   date.setDate(date.getDate() + days);
@@ -37,7 +52,7 @@ function dayLabel(dateStr) {
 
 function dateKeyFromTimestamp(value) {
   if (!value) return null;
-  return localIsoDate(new Date(value));
+  return brisbaneIsoDate(new Date(value));
 }
 
 function timeLabel(event) {
@@ -176,7 +191,7 @@ export default function GoogleAgendaTab({ user, showToast }) {
   const [loading, setLoading] = useState(false);
 
   const cleanWorkerUrl = useMemo(() => workerUrl.replace(/\/+$/, ''), [workerUrl]);
-  const today = useMemo(() => localIsoDate(), []);
+  const today = useMemo(() => brisbaneIsoDate(), []);
   const days = useMemo(() => Array.from({ length: 7 }, (_, idx) => addDays(today, idx)), [today]);
   const endDate = days[days.length - 1];
   const sourcesById = useMemo(() => new Map(sources.map(source => [source.id, source])), [sources]);
@@ -204,8 +219,8 @@ export default function GoogleAgendaTab({ user, showToast }) {
   const loadAgenda = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const startIso = `${today}T00:00:00`;
-    const endIso = `${addDays(endDate, 1)}T00:00:00`;
+    const startIso = brisbaneDayStartIso(today);
+    const endIso = brisbaneDayStartIso(addDays(endDate, 1));
     const [sourceRes, eventRes, taskRes, actionRes] = await Promise.all([
       sb.from('google_agenda_sources').select('*').eq('user_id', user.id).order('source_type').order('name'),
       sb.from('google_calendar_events').select('*').eq('user_id', user.id).gte('start_at', startIso).lt('start_at', endIso).order('start_at'),
