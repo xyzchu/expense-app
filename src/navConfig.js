@@ -82,6 +82,10 @@ export const buildNavConfig = (can) => [
     id: 'tasks', emoji: '✅', label: 'Tasks', nav: true,
     action: { tab: 'tasks' },
   },
+  {
+    id: 'agenda', emoji: '📅', label: 'Agenda', nav: true,
+    action: { tab: 'agenda' },
+  },
   ...(can('travel') ? [{
     id: 'travel', emoji: '✈️', label: 'Travel', nav: true,
     action: { tab: 'travel' },

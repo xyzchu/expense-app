@@ -15,6 +15,7 @@ const ShopperTab = React.lazy(() => import('./ShopperTab'));
 const TravelTabLazy = React.lazy(() => import('./TravelTab'));
 const MailTabLazy = React.lazy(() => import('./MailTab'));
 const TasksTabLazy = React.lazy(() => import('./TasksTab'));
+const GoogleAgendaTabLazy = React.lazy(() => import('./GoogleAgendaTab'));
 const StatsTabLazy = React.lazy(() => import('./StatsTab'));
 const SettingsTabLazy = React.lazy(() => import('./SettingsTab'));
 const InvestingTabLazy = React.lazy(() => import('./InvestingTab'));
@@ -844,6 +845,8 @@ export default function SplitEase() {
       expense: { tab: 'home', homeView: 'expenses' },
       expenses: { tab: 'home', homeView: 'expenses' },
       tasks: { tab: 'tasks' },
+      agenda: { tab: 'agenda' },
+      calendar: { tab: 'agenda' },
       travel: { tab: 'travel' },
       pnl: { tab: 'investing', investingView: 'securities', securitiesView: 'pnl' },
       'p&l': { tab: 'investing', investingView: 'securities', securitiesView: 'pnl' },
@@ -3450,10 +3453,11 @@ const HomeTab = () => (
         {can('investing') && tab === 'investing' && <InvestingTabLazy user={user} showToast={showToast} sendNotification={sendNotification} rates={rates} txns={txns} defCur={defCur} expenses={expenses} currentList={currentList} investingView={investingView} setInvestingView={setInvestingView} investingPortfolioView={investingPortfolioView} setInvestingPortfolioView={setInvestingPortfolioView} investingSecuritiesView={investingSecuritiesView} setInvestingSecuritiesView={setInvestingSecuritiesView} pushSupported={pushSupported} pushSubscribed={pushSubscribed} pushLoading={pushLoading} pushSubscribe={pushSubscribe} pushUnsubscribe={pushUnsubscribe} />}
         {tab === 'shopper' && <ShopperTab />}
         {tab === 'tasks' && <TasksTabLazy user={user} sb={sb} showToast={showToast} focusRequest={taskInputFocusRequest} />}
+        {tab === 'agenda' && <GoogleAgendaTabLazy user={user} showToast={showToast} />}
         {can('travel') && tab === 'travel' && <TravelTabLazy user={user} sb={sb} showToast={showToast} />}
         {tab === 'mail' && <MailTabLazy user={user} defCur={defCur} showToast={showToast} addExpenseCandidate={addMailCandidateExpense} />}
       </React.Suspense>
-      {tab !== 'investing' && tab !== 'shopper' && tab !== 'tasks' && tab !== 'travel' && tab !== 'mail' && (
+      {tab !== 'investing' && tab !== 'shopper' && tab !== 'tasks' && tab !== 'agenda' && tab !== 'travel' && tab !== 'mail' && (
         <div style={{
           textAlign: 'center',
           padding: isWide ? '16px 16px 40px' : '16px 16px 80px',

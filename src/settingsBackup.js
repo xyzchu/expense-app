@@ -28,6 +28,10 @@ const FULL_BACKUP_TABLES = [
   { name: 'custom_news_items', scope: 'user', key: 'user_id,query_id,fetch_date' },
   { name: 'user_push_subscriptions', scope: 'user', key: 'user_id,endpoint' },
   { name: 'travel_bookings', scope: 'user', key: 'id' },
+  { name: 'google_agenda_sources', scope: 'user', key: 'id' },
+  { name: 'google_calendar_events', scope: 'user', key: 'id' },
+  { name: 'google_tasks_cache', scope: 'user', key: 'id' },
+  { name: 'google_task_actions', scope: 'user', key: 'id' },
 ];
 
 export const EXPORT_GROUPS = [
@@ -60,6 +64,11 @@ export const EXPORT_GROUPS = [
     id: 'travel',
     label: 'Travel',
     tables: ['travel_bookings'],
+  },
+  {
+    id: 'agenda',
+    label: 'Google Agenda',
+    tables: ['google_agenda_sources', 'google_calendar_events', 'google_tasks_cache', 'google_task_actions'],
   },
   {
     id: 'settings',
