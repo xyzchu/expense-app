@@ -450,6 +450,11 @@ export default async function handler(req, res) {
   const listId = matched.config.list_id;
   const person = matched.config.person || String(req.query.person || '').trim();
   if (!listId || !person) return res.status(400).json({ error: 'Widget token is missing list/person config' });
+  const month = parseMonthKey(req.query.month);
+  if (!month) return res.status(400).json({ error: 'Invalid month. Use YYYY-MM.' });
+  const monthStart = `${month}-01`;
+  const monthEnd = monthEndFor(month);
+  const todayStr = todayIso();
 
   const { data: travelMemberships, error: travelMembershipsError } = await supabase
     .from('travel_trip_members')
@@ -483,7 +488,7 @@ export default async function handler(req, res) {
   ] = await Promise.all([
     supabase.from('expense_lists').select('id,name,default_currency').eq('id', listId).single(),
     supabase.from('list_members').select('display_name').eq('list_id', listId),
-    supabase.from('expenses').select('date,category,total_amount,shares,split_type').eq('list_id', listId),
+    supabase.from('expenses').select('date,category,total_amount,shares,split_type').eq('list_id', listId).gte('date', monthStart).lte('date', monthEnd),
     supabase.from('list_settings').select('key,value').eq('list_id', listId),
     supabase.from('user_settings').select('key,value').eq('user_id', matched.user_id),
     supabase.from('securities_transactions').select('*').eq('user_id', matched.user_id),
@@ -499,11 +504,6 @@ export default async function handler(req, res) {
   const currency = list?.default_currency || 'AUD';
   const rates = await fetchRates('USD');
   const memberNames = (members || []).map((member) => member.display_name).filter(Boolean);
-  const month = parseMonthKey(req.query.month);
-  if (!month) return res.status(400).json({ error: 'Invalid month. Use YYYY-MM.' });
-  const monthStart = `${month}-01`;
-  const monthEnd = monthEndFor(month);
-  const todayStr = todayIso();
   const travelToday = buildTravelToday(travelBookings, todayStr);
   const upcomingStart = monthStart > todayStr ? monthStart : todayStr;
   const totals = { income: 0, investment: 0, expense: 0 };
