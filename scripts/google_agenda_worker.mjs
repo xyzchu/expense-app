@@ -409,23 +409,68 @@ async function processPendingTaskActions(config, token, userId) {
       .eq('id', action.id)
       .eq('user_id', userId);
     try {
-      const url = `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(action.google_task_list_id)}/tasks/${encodeURIComponent(action.google_task_id)}`;
-      const body = action.action === 'complete'
-        ? { status: 'completed', completed: now }
-        : { status: 'needsAction', completed: null };
-      const updated = await googleFetch(token, url, { method: 'PATCH', body: JSON.stringify(body) });
-      await config.supabase
-        .from('google_tasks_cache')
-        .update({
-          status: updated.status || body.status,
-          is_completed: (updated.status || body.status) === 'completed',
-          completed_at: updated.completed || null,
-          raw: updated,
-          synced_at: now,
-          updated_at: now,
-        })
-        .eq('id', action.task_cache_id)
-        .eq('user_id', userId);
+      if (action.action === 'create') {
+        const source = action.source_id
+          ? await config.supabase
+              .from('google_agenda_sources')
+              .select('*')
+              .eq('id', action.source_id)
+              .eq('user_id', userId)
+              .maybeSingle()
+          : { data: null, error: null };
+        if (source.error) throw new Error(`Loading task list failed: ${source.error.message}`);
+        const payload = action.payload || {};
+        const taskListId = action.google_task_list_id || source.data?.external_id;
+        if (!taskListId) throw new Error('Task list is missing for create action');
+        const body = {
+          title: String(payload.title || '').trim() || '(No title)',
+          notes: String(payload.notes || '').trim() || undefined,
+          due: payload.due_date ? `${payload.due_date}T00:00:00.000Z` : undefined,
+        };
+        const created = await googleFetch(
+          token,
+          `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(taskListId)}/tasks`,
+          { method: 'POST', body: JSON.stringify(body) }
+        );
+        if (source.data?.id) {
+          const { error: cacheError } = await config.supabase
+            .from('google_tasks_cache')
+            .upsert({
+              user_id: userId,
+              source_id: source.data.id,
+              external_id: created.id,
+              title: created.title || body.title,
+              notes: created.notes || null,
+              due_date: taskDueDate(created),
+              status: created.status || 'needsAction',
+              is_completed: created.status === 'completed',
+              completed_at: created.completed || null,
+              raw: created,
+              synced_at: now,
+              updated_at: now,
+            }, { onConflict: 'user_id,source_id,external_id' });
+          if (cacheError) throw new Error(`Saving created task failed: ${cacheError.message}`);
+        }
+      } else {
+        if (!action.google_task_id) throw new Error('Google task id is missing');
+        const url = `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(action.google_task_list_id)}/tasks/${encodeURIComponent(action.google_task_id)}`;
+        const body = action.action === 'complete'
+          ? { status: 'completed', completed: now }
+          : { status: 'needsAction', completed: null };
+        const updated = await googleFetch(token, url, { method: 'PATCH', body: JSON.stringify(body) });
+        await config.supabase
+          .from('google_tasks_cache')
+          .update({
+            status: updated.status || body.status,
+            is_completed: (updated.status || body.status) === 'completed',
+            completed_at: updated.completed || null,
+            raw: updated,
+            synced_at: now,
+            updated_at: now,
+          })
+          .eq('id', action.task_cache_id)
+          .eq('user_id', userId);
+      }
       await config.supabase
         .from('google_task_actions')
         .update({ status: 'done', error: null, processed_at: now, updated_at: now })

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Check, Circle, RefreshCw, Settings2, X } from 'lucide-react';
+import { CalendarDays, Check, Circle, RefreshCw, Send, Settings2, X } from 'lucide-react';
 import sb from './supabaseClient';
 import { CLAY, FS, FW, MONO } from './theme';
 import { s } from './appConstants';
@@ -189,6 +189,10 @@ export default function GoogleAgendaTab({ user, showToast }) {
   const [collapsedOverdue, setCollapsedOverdue] = useState(true);
   const [expandedClassGroups, setExpandedClassGroups] = useState({});
   const [loading, setLoading] = useState(false);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskDueDate, setTaskDueDate] = useState(() => brisbaneIsoDate());
+  const [taskNotes, setTaskNotes] = useState('');
+  const [taskListId, setTaskListId] = useState('');
 
   const cleanWorkerUrl = useMemo(() => workerUrl.replace(/\/+$/, ''), [workerUrl]);
   const today = useMemo(() => brisbaneIsoDate(), []);
@@ -242,6 +246,13 @@ export default function GoogleAgendaTab({ user, showToast }) {
     loadSettings();
     loadAgenda();
   }, [loadAgenda, loadSettings]);
+
+  useEffect(() => {
+    const taskLists = sources.filter(source => source.source_type === 'task_list' && source.selected);
+    if (taskLists.length && !taskLists.some(source => source.id === taskListId)) {
+      setTaskListId(taskLists[0].id);
+    }
+  }, [sources, taskListId]);
 
   const saveSettings = async () => {
     const nextUrl = draftWorkerUrl.trim() || DEFAULT_WORKER_URL;
@@ -371,6 +382,42 @@ export default function GoogleAgendaTab({ user, showToast }) {
     await loadAgenda();
   };
 
+  const createGoogleTask = async () => {
+    const title = taskTitle.trim();
+    if (!title) {
+      showToast?.('Type a task first');
+      return;
+    }
+    const source = sourcesById.get(taskListId) || sources.find(item => item.source_type === 'task_list' && item.selected);
+    if (!source) {
+      showToast?.('Sync Agenda once and select a Google Task list first');
+      return;
+    }
+    const payload = {
+      title,
+      notes: taskNotes.trim(),
+      due_date: taskDueDate || null,
+    };
+    const { error } = await sb.from('google_task_actions').insert({
+      user_id: user.id,
+      source_id: source.id,
+      google_task_list_id: source.external_id,
+      action: 'create',
+      payload,
+    });
+    if (error) {
+      showToast?.(`Could not queue Google task: ${error.message}`);
+      return;
+    }
+    setTaskTitle('');
+    setTaskNotes('');
+    setTaskDueDate(today);
+    setTaskListId(source.id);
+    showToast?.('Google task queued');
+    await loadAgenda();
+    await triggerWorkerSync();
+  };
+
   const visibleSources = sources.filter(source => source.selected);
   const visibleSourceIds = new Set(visibleSources.map(source => source.id));
   const filteredEvents = events.filter(event => visibleSourceIds.has(event.source_id));
@@ -392,6 +439,7 @@ export default function GoogleAgendaTab({ user, showToast }) {
     { type: 'calendar', label: 'Calendars', items: sources.filter(source => source.source_type === 'calendar') },
     { type: 'task_list', label: 'Task lists', items: sources.filter(source => source.source_type === 'task_list') },
   ];
+  const taskListSources = sources.filter(source => source.source_type === 'task_list' && source.selected);
 
   const actionErrors = actions.filter(action => action.status === 'error');
   const pendingActions = actions.filter(action => ['pending', 'processing'].includes(action.status));
@@ -509,6 +557,42 @@ export default function GoogleAgendaTab({ user, showToast }) {
           </EmptyState>
         </Card>
       ) : null}
+
+      <Card compact>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: FS.lg, fontWeight: FW.semibold, color: CLAY.text }}>Add Google Task</div>
+            <div style={{ marginTop: 3, fontSize: FS.lg, color: CLAY.textLt }}>Creates in Google Tasks through your local Agenda worker.</div>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Field
+              value={taskTitle}
+              onChange={e => setTaskTitle(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  createGoogleTask();
+                }
+              }}
+              placeholder="Describe a Google task..."
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Field type="date" value={taskDueDate} onChange={e => setTaskDueDate(e.target.value)} />
+              <select value={taskListId} onChange={e => setTaskListId(e.target.value)} style={{ ...s.input, fontFamily: MONO, fontSize: FS.lg }}>
+                {taskListSources.length === 0 ? (
+                  <option value="">No task list synced</option>
+                ) : taskListSources.map(source => (
+                  <option key={source.id} value={source.id}>{source.name}</option>
+                ))}
+              </select>
+            </div>
+            <Field value={taskNotes} onChange={e => setTaskNotes(e.target.value)} placeholder="Notes (optional)" />
+            <Button variant="primary" onClick={createGoogleTask} disabled={!taskTitle.trim() || taskListSources.length === 0 || syncing}>
+              <Send size={16} /> Add and sync
+            </Button>
+          </div>
+        </div>
+      </Card>
 
       {overdueTasks.length > 0 && (
         <Card compact>
