@@ -50,6 +50,60 @@ function timeLabel(event) {
   return `${startText}-${end.toLocaleTimeString('en-AU', fmt)}`;
 }
 
+function isYutonClassEvent(event) {
+  const text = [event?.title, event?.description, event?.location]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return text.includes('yuton') && text.includes('class');
+}
+
+function summarizeYutonClassEvents(events) {
+  const normalEvents = [];
+  const groups = { morning: [], afternoon: [] };
+
+  for (const event of events) {
+    if (!isYutonClassEvent(event) || event.all_day || !event.start_at) {
+      normalEvents.push(event);
+      continue;
+    }
+    const start = new Date(event.start_at);
+    if (Number.isNaN(start.getTime())) {
+      normalEvents.push(event);
+      continue;
+    }
+    const bucket = start.getHours() < 12 ? 'morning' : 'afternoon';
+    groups[bucket].push(event);
+  }
+
+  const summaryEvents = Object.entries(groups).flatMap(([period, items]) => {
+    if (!items.length) return [];
+    const starts = items.map(item => new Date(item.start_at)).filter(date => !Number.isNaN(date.getTime()));
+    const ends = items
+      .map(item => item.end_at ? new Date(item.end_at) : new Date(item.start_at))
+      .filter(date => !Number.isNaN(date.getTime()));
+    if (!starts.length) return items;
+    const start = new Date(Math.min(...starts.map(date => date.getTime())));
+    const end = new Date(Math.max(...ends.map(date => date.getTime())));
+    return [{
+      ...items[0],
+      id: `yuton-class-${period}-${items.map(item => item.id).join('-')}`,
+      title: `Yuton class · ${period}`,
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      location: '',
+      is_summary: true,
+      summary_count: items.length,
+    }];
+  });
+
+  return [...normalEvents, ...summaryEvents].sort((a, b) => {
+    const left = new Date(a.start_at || 0).getTime();
+    const right = new Date(b.start_at || 0).getTime();
+    return left - right;
+  });
+}
+
 function parseJsonSetting(value, fallback) {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
@@ -282,7 +336,7 @@ export default function GoogleAgendaTab({ user, showToast }) {
   const overdueTasks = filteredTasks.filter(task => !task.is_completed && task.due_date && task.due_date < today);
 
   const byDay = days.map(day => {
-    const dayEvents = filteredEvents.filter(event => dateKeyFromTimestamp(event.start_at) === day);
+    const dayEvents = summarizeYutonClassEvents(filteredEvents.filter(event => dateKeyFromTimestamp(event.start_at) === day));
     const dayTasks = filteredTasks.filter(task => task.due_date === day);
     return { day, events: dayEvents, tasks: dayTasks };
   });
@@ -452,7 +506,9 @@ function EventRow({ event, source }) {
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: FS.lg, color: CLAY.text, lineHeight: 1.3 }}>{event.title}</div>
         <div style={{ marginTop: 3, fontSize: FS.lg, color: CLAY.textLt, lineHeight: 1.35 }}>
-          {source?.name || 'Calendar'}{event.location ? ` · ${event.location}` : ''}
+          {source?.name || 'Calendar'}
+          {event.is_summary ? ` · ${event.summary_count} class blocks hidden` : ''}
+          {event.location ? ` · ${event.location}` : ''}
         </div>
       </div>
     </div>
