@@ -72,20 +72,21 @@ function scheduleLabel(times, timeZone) {
   return `Auto: ${times.join(', ')} ${zoneLabel}`;
 }
 
-function isYutonClassEvent(event) {
-  const text = [event?.title, event?.description, event?.location]
+function isYutonClassEvent(event, source) {
+  const text = [event?.title, event?.description, event?.location, source?.name]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
   return text.includes('yuton') && text.includes('class');
 }
 
-function summarizeYutonClassEvents(events) {
+function summarizeYutonClassEvents(events, sourcesById, expandedGroups) {
   const normalEvents = [];
   const groups = { morning: [], afternoon: [] };
 
   for (const event of events) {
-    if (!isYutonClassEvent(event) || event.all_day || !event.start_at) {
+    const source = sourcesById.get(event.source_id);
+    if (!isYutonClassEvent(event, source) || event.all_day || !event.start_at) {
       normalEvents.push(event);
       continue;
     }
@@ -107,16 +108,20 @@ function summarizeYutonClassEvents(events) {
     if (!starts.length) return items;
     const start = new Date(Math.min(...starts.map(date => date.getTime())));
     const end = new Date(Math.max(...ends.map(date => date.getTime())));
-    return [{
+    const summaryId = `yuton-class-${period}-${items.map(item => item.id).join('-')}`;
+    const summary = {
       ...items[0],
-      id: `yuton-class-${period}-${items.map(item => item.id).join('-')}`,
-      title: `Yuton class · ${period}`,
+      id: summaryId,
+      title: 'Yuton Class',
       start_at: start.toISOString(),
       end_at: end.toISOString(),
       location: '',
       is_summary: true,
       summary_count: items.length,
-    }];
+      summary_period: period,
+      summary_children: items,
+    };
+    return expandedGroups[summaryId] ? [summary, ...items] : [summary];
   });
 
   return [...normalEvents, ...summaryEvents].sort((a, b) => {
@@ -167,6 +172,7 @@ export default function GoogleAgendaTab({ user, showToast }) {
   const [tasks, setTasks] = useState([]);
   const [actions, setActions] = useState([]);
   const [collapsedOverdue, setCollapsedOverdue] = useState(true);
+  const [expandedClassGroups, setExpandedClassGroups] = useState({});
   const [loading, setLoading] = useState(false);
 
   const cleanWorkerUrl = useMemo(() => workerUrl.replace(/\/+$/, ''), [workerUrl]);
@@ -358,7 +364,11 @@ export default function GoogleAgendaTab({ user, showToast }) {
   const overdueTasks = filteredTasks.filter(task => !task.is_completed && task.due_date && task.due_date < today);
 
   const byDay = days.map(day => {
-    const dayEvents = summarizeYutonClassEvents(filteredEvents.filter(event => dateKeyFromTimestamp(event.start_at) === day));
+    const dayEvents = summarizeYutonClassEvents(
+      filteredEvents.filter(event => dateKeyFromTimestamp(event.start_at) === day),
+      sourcesById,
+      expandedClassGroups
+    );
     const dayTasks = filteredTasks.filter(task => task.due_date === day);
     return { day, events: dayEvents, tasks: dayTasks };
   });
@@ -513,7 +523,15 @@ export default function GoogleAgendaTab({ user, showToast }) {
             <div style={{ color: CLAY.textLt, fontSize: FS.lg, padding: '8px 0' }}>Nothing scheduled.</div>
           ) : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {dayEvents.map(event => <EventRow key={event.id} event={event} source={sourcesById.get(event.source_id)} />)}
+              {dayEvents.map(event => (
+                <EventRow
+                  key={event.id}
+                  event={event}
+                  source={sourcesById.get(event.source_id)}
+                  onToggleSummary={event.is_summary ? () => setExpandedClassGroups(prev => ({ ...prev, [event.id]: !prev[event.id] })) : null}
+                  expanded={!!expandedClassGroups[event.id]}
+                />
+              ))}
               {dayTasks.map(task => <TaskRow key={task.id} task={task} source={sourcesById.get(task.source_id)} onToggle={() => toggleGoogleTask(task)} />)}
             </div>
           )}
@@ -523,19 +541,52 @@ export default function GoogleAgendaTab({ user, showToast }) {
   );
 }
 
-function EventRow({ event, source }) {
+function EventRow({ event, source, onToggleSummary = null, expanded = false }) {
   const color = source?.color || CLAY.blueDk;
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '82px 1fr', gap: 10, alignItems: 'start', padding: 10, borderRadius: 14, background: CLAY.surf2 }}>
+  const body = (
+    <>
       <div style={{ fontSize: FS.lg, color: color, fontVariantNumeric: 'tabular-nums' }}>{timeLabel(event)}</div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: FS.lg, color: CLAY.text, lineHeight: 1.3 }}>{event.title}</div>
+        <div style={{ fontSize: FS.lg, color: CLAY.text, lineHeight: 1.3 }}>
+          {event.title}
+          {event.is_summary ? <span style={{ color: CLAY.textLt }}> · {event.summary_period}</span> : null}
+        </div>
         <div style={{ marginTop: 3, fontSize: FS.lg, color: CLAY.textLt, lineHeight: 1.35 }}>
-          {source?.name || 'Calendar'}
-          {event.is_summary ? ` · ${event.summary_count} class blocks hidden` : ''}
-          {event.location ? ` · ${event.location}` : ''}
+          {event.is_summary
+            ? `${event.summary_count} class${event.summary_count === 1 ? '' : 'es'} ${expanded ? 'shown' : 'hidden'} · tap to ${expanded ? 'hide' : 'show'}`
+            : `${source?.name || 'Calendar'}${event.location ? ` · ${event.location}` : ''}`}
         </div>
       </div>
+    </>
+  );
+
+  if (event.is_summary) {
+    return (
+      <button
+        type="button"
+        onClick={onToggleSummary}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '82px 1fr',
+          gap: 10,
+          alignItems: 'start',
+          padding: 10,
+          borderRadius: 14,
+          background: CLAY.surf2,
+          border: 'none',
+          textAlign: 'left',
+          cursor: 'pointer',
+          fontFamily: MONO,
+        }}
+      >
+        {body}
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '82px 1fr', gap: 10, alignItems: 'start', padding: 10, borderRadius: 14, background: CLAY.surf2 }}>
+      {body}
     </div>
   );
 }
