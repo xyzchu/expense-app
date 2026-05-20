@@ -11,6 +11,7 @@ const SCHEDULE_TIMES_KEY = 'google_agenda_sync_times';
 const SCHEDULE_TIMEZONE_KEY = 'google_agenda_sync_timezone';
 const LAST_SYNC_KEY = 'google_agenda_last_sync';
 const DEFAULT_TIMEZONE = 'Australia/Brisbane';
+const BRISBANE_TIMEZONE = 'Australia/Brisbane';
 
 function sleep(ms) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -48,6 +49,27 @@ function timeLabel(event) {
   const startText = start.toLocaleTimeString('en-AU', fmt);
   if (!end || Number.isNaN(end.getTime())) return startText;
   return `${startText}-${end.toLocaleTimeString('en-AU', fmt)}`;
+}
+
+function brisbaneDateTimeLabel(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-AU', {
+    timeZone: BRISBANE_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function scheduleLabel(times, timeZone) {
+  if (!times.length) return 'Auto sync off';
+  const zoneLabel = timeZone === BRISBANE_TIMEZONE ? 'Brisbane time' : `${timeZone} time`;
+  return `Auto: ${times.join(', ')} ${zoneLabel}`;
 }
 
 function isYutonClassEvent(event) {
@@ -369,8 +391,8 @@ export default function GoogleAgendaTab({ user, showToast }) {
               Local Google worker syncs Calendar and Tasks into SplitEase for the next 7 days.
             </div>
             <div style={{ marginTop: 8, fontSize: FS.lg, color: CLAY.textLt, lineHeight: 1.45 }}>
-              {lastSync?.time ? `Last sync ${new Date(lastSync.time).toLocaleString()}` : 'Not synced yet'}
-              {scheduleTimes.length ? ` · Auto: ${scheduleTimes.join(', ')} ${scheduleTimezone}` : ' · Auto sync off'}
+              {lastSync?.time ? `Last sync ${brisbaneDateTimeLabel(lastSync.time)} Brisbane time` : 'Not synced yet'}
+              {` · ${scheduleLabel(scheduleTimes, scheduleTimezone)}`}
               {pendingActions.length ? ` · ${pendingActions.length} task update(s) queued` : ''}
               {status ? ` · ${status}` : ''}
             </div>
@@ -391,7 +413,7 @@ export default function GoogleAgendaTab({ user, showToast }) {
               <Field value={draftWorkerUrl} onChange={e => setDraftWorkerUrl(e.target.value)} placeholder={DEFAULT_WORKER_URL} />
             </label>
             <div>
-              <div style={s.label}>Scheduled sync times</div>
+              <div style={s.label}>Scheduled sync times ({draftScheduleTimezone === BRISBANE_TIMEZONE ? 'Brisbane time' : draftScheduleTimezone})</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Field type="time" value={draftScheduleTime} onChange={e => setDraftScheduleTime(e.target.value)} style={{ maxWidth: 150 }} />
                 <Button onClick={addScheduleTime}>Add</Button>
@@ -414,6 +436,9 @@ export default function GoogleAgendaTab({ user, showToast }) {
             <label>
               <div style={s.label}>Schedule timezone</div>
               <Field value={draftScheduleTimezone} onChange={e => setDraftScheduleTimezone(e.target.value)} placeholder={DEFAULT_TIMEZONE} />
+              <div style={{ marginTop: 6, fontSize: FS.lg, color: CLAY.textLt }}>
+                Use <code style={{ fontFamily: MONO }}>Australia/Brisbane</code> to schedule in Brisbane time.
+              </div>
             </label>
             {sourceSections.map(section => (
               <div key={section.type}>
